@@ -1,0 +1,13 @@
+#!/usr/bin/perl
+
+for $y (reverse (4..128))
+{
+    printf ("%3d", $y);
+    printf ("---") unless $y % 10;
+    printf ("\n");
+}
+for $x (1..25)
+{
+    printf ("----+--%02d0", $x);
+}
+printf ("\n");

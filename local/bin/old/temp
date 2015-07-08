@@ -1,0 +1,12 @@
+#!/usr/bin/perl
+
+open (FIN, "/proc/acpi/thermal_zone/THM/temperature") || die;
+while (<FIN>)
+{
+    if (@ARGV)
+    {
+	($_) = /(\d+)/;
+	$_ .= "C\n";
+    }
+    print;
+}

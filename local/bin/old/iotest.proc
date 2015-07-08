@@ -1,0 +1,22 @@
+#!/usr/bin/perl
+
+push @ARGV, "iotest.log";
+
+while (<>)
+{
+	($host, $drive, $rate) = /^(\S+)\s+(\S+)\s+.*= (\d+.\d+) MB\/sec/;
+	$H{$host}++;
+	$D{$drive}++;
+	$N{$host}{$drive}++;
+	$R{$host}{$drive}+=$rate;
+}
+
+for $host (sort keys %H)
+{
+    printf "%-11s ", $host;
+    for $drive (sort keys %D)
+    {
+	printf " %20s=%8.4f", $drive, $R{$host}{$drive}/$N{$host}{$drive};
+    }
+    printf "\n";
+}

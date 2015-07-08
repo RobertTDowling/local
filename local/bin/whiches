@@ -1,0 +1,136 @@
+#!/usr/bin/perl
+@rem = '# This nonsense is for Win95/NT and emacs -*-Perl-*-
+@echo off
+perl -x -S "%0" %1 %2 %3 %4 %5 %6 %7 %8 %9
+goto endofperl
+';
+#!perl
+
+#
+# Which: print the full path of all executable in path (pod at __END__)
+#
+#	 1Nov94: Now finds any kind of file, if the extension is given
+#	 7Aug95: Give size and time/date
+#	27Jul00: Port to Unix and back again.  Add a little POD
+#
+'(C) Copyright 2006 Robert Dowling.';
+#
+#    This program is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; either version 2 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program; if not, write to the Free Software
+#    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+# R Dowling  rob at rtdti.com
+
+$dos = ${^O} =~ /Win32/i or $0 =~ /\.bat/i;
+$path_split = $dos ? ';' : ':';
+$slash = $dos ? '\\' : '/';
+
+die <<EOL
+Usage:
+    whiches FILENAME
+
+Tells you where all executables that match FILENAME are in your path,
+in the order they would be found by your shell.  Version 1.03 Apr 2006
+EOL
+	if $#ARGV < 0;
+
+#print "#=$#ARGV 0=$ARGV[0] 1=$ARGV[1] 2=$ARGV[2]\n";
+print &findall ($ARGV[0], "PATH"),"\n";
+print "Executable '$ARGV[0]' not found in $ENV{PATH}\n" unless $any;
+
+# findall (file to find, environ var to check)
+#   Make sure that the env var is all uppercase
+#   prints out findings
+
+sub findall
+{
+    local ($find, $var, @list) = @_;
+
+    # Make a copy of environment so we can change without injury
+    @list = ($dos ? '.':(), split (/$path_split/, $ENV{uc $var}));
+    foreach (@list)
+    {
+	# Prune trailing slashes
+	s/$slash+$//;
+
+	$_ .= $slash . $find;
+
+	&tellall ($_);
+	&tellall ("$_.com");
+	&tellall ("$_.exe");
+	&tellall ("$_.bat");
+    }
+}
+
+sub tellall
+{
+    my ($f) = @_;
+
+    # Give up if it doesn't exist
+    return unless -e $f && !-d _;
+
+    # Remember that we found one
+    $any = 1;
+
+    my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,
+	$atime,$mtime,$ctime,$blksize,$blocks) = stat(_);
+
+    my ($time);
+
+    #$time = localtime ($atime);
+    $time = localtime ($mtime);
+    #$time = localtime ($ctime);
+
+    $f .= " -> " . readlink ($f) if -l $f;
+
+    printf ("%s -- %7d -- %s\n", $time, $size, $f);
+}
+
+__END__
+
+
+=head1 NAME
+
+whiches - locate all named executables in order on search path
+
+=head1 SYNOPSIS
+
+B<whiches> S<I<filename>>
+
+=head1 DESCRIPTION
+
+B<whiches> is an enhanced version of the standard UNIX shell built-in
+I<which>, which produces a list of B<all> the executables which match
+the given I<filename>, in the order in which they appear in the user's
+search path.  Because B<whiches>' output is vebose and multi-line, it
+is more suitable than I<which> for interactive use in debugging path
+problems.
+
+On the Win32 platform, B<whiches> will automatically search for the
+common executable extensions (.bat, .exe, .com) in the correct order.
+
+For each executable found, a line is output giving the modify date,
+size in bytes, and the complete path (with extensions) for the file.
+
+=head1 SEE ALSO
+
+which(1), csh(1)
+
+=head1 AUTHOR
+
+Robert Dowling <F<rob at rtdti.com>>.
+Download from L<http://www.rtdti.com/sw>
+
+=cut
+
+:endofperl

@@ -1,0 +1,12 @@
+#!/usr/bin/perl
+
+use Time::Local;
+
+$last = timelocal (0,41,07,30,7-1,2006);
+$last = timelocal (0,00,7,3,10-1,2006);
+$now = time;
+$mins = ($now - $last)/60;
+$hours = int ($mins / 60); $mins  -= 60 * $hours;
+$days  = int ($hours/24);  $hours -= 24 * $days;
+$weeks = int ($days / 7);  $days  -=  7 * $weeks;
+printf ("%dw%dd-%02d:%02d\n", $weeks, $days, $hours, $mins);

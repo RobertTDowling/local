@@ -1,0 +1,2 @@
+emacs -g 163x59 -f split-window-horizontally -f split-window-horizontally $*
+

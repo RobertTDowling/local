@@ -1,0 +1,24 @@
+#!/usr/bin/perl
+
+open (FIN, "/proc/acpi/battery/BAT0/info") || die;
+while (<FIN>)
+{
+    $full = $1 if /last full capacity:\s*(\d+)/;
+}
+
+open (FIN, "/proc/acpi/battery/BAT0/state") || die;
+while (<FIN>)
+{
+    $at = $1 if /remaining capacity:\s*(\d+)/;
+    $rate = $1 if /present rate:\s*(\d+)/;
+}
+
+if (@ARGV)
+{
+    printf ("%3d%%\n", 100*$at/$full);
+}
+else
+{
+    printf ("Battery At %4d/%4d=%3d%% Rate=%4d=%5.2f hours\n",
+	    $at, $full, 100*$at/$full, $rate, $at/$rate);
+}

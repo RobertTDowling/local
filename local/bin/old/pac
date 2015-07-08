@@ -1,0 +1,4 @@
+#!/bin/csh
+
+cd ~rob/pac/PAC1
+pac

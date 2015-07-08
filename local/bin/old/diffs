@@ -1,0 +1,30 @@
+#!/usr/bin/perl
+
+$RECURSE = 1;
+
+($d1, $d2, @wild) = @ARGV;
+
+sub search($)
+{
+    my $d1 = shift;
+    my %d1=();
+    $d1{$_}++ for (map { glob "$d1/$_" } @wild);
+    my @d1=sort { lc($a) cmp lc($b) } keys %d1;
+}
+
+@d1 = search ($d1);
+# print "d1= ",join (",  ", @d1), "\n";
+
+while ($p1=shift @d1)
+{
+    if (-d $p1)
+    {
+	if ($RECURSE)
+	{
+	    unshift @d1, search($p1)
+	}
+	next;
+    }
+    $f1 = $p1; $f1 =~ s#^$d1/##; 
+    print "$f1\n";
+}

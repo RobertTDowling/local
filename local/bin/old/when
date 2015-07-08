@@ -1,0 +1,135 @@
+#!/usr/bin/perl
+
+#
+# When: when is day done?
+#
+$DOS = -e '/autoexec.bat';
+print "-------------------------------------------------------------------\n";
+$time = "/home/atmel/rob/time.log";
+open (TIME, $time) || die "Can't open $time";
+#$now = &hour(substr (`now 2`, 8, 5));
+&mytime;
+
+$client_match = "ATMEL";
+
+# Get any change on the command line
+$change = $ARGV[0] if scalar(@ARGV);
+
+while (<TIME>)
+{
+	# Read in a line of time.log and break it apart
+
+	if (/^\t/)
+	{
+		# Comment start with tab
+		s/^\t+//;
+		$new_what .= $_;
+		next;
+	}
+	
+#TCSI                Thu  6/15/95  0:00  Fri  6/15/95 04:47      4.7800
+#--------------------||||||||||||||||||||====================*****************
+
+	# $intime=$outtime="";
+	($client, $intime, $outtime) = unpack ("A20 A20 A*", $_);
+
+	# Skip it if not for this client
+	### next unless $client_match eq $client;
+
+	# Is this the same as last day?
+
+	# Skip it if not this day
+	# next unless $now eq substr ($intime, 0, 12);
+	$in = substr ($intime, 0, 12);
+	# print "in='$in' ";
+	if ($in eq $last_day)
+	{
+		# print "Same day...";
+	}
+	else
+	{
+		# print "New Day...";
+		$last_day = $in;
+		$sum = 0;
+		$start = 0;
+	}
+
+	# Compute difference
+	$i = &hour($intime);
+	$o = &hour($outtime);
+	if ($o)
+	{
+		# There was an out time... add it in
+		$diff = $o-$i;
+		$sum += $diff;
+		# print "Adding $diff...=$sum\n";
+	}
+	else
+	{
+		# No out time...Keep start time
+		$start = &hour($intime);
+		# print "# No out time...Keep start time=$start\n";
+	}
+	# printf "now='$now' in=$in\n"; # in='$intime' out=$outtime o=$o\n";
+}
+
+# Ok, we get here, time to dump out hours
+printf ("Clock In on $in.  Total hours logged=%.2f+%.2f=%.2f ", $sum, $change,
+	$sum+$change);
+$sum += $change;
+if ($start)
+{
+	# compute a stop time
+	$stop = $start + 8 - $sum;
+	$more = $stop - $now;
+	print "Start=" ,&hms($start);
+	print "\nLeave at: ",&hms($stop);
+	if ($more>=0)
+	{
+		print " (",&hms($more)," more)\n";
+	}
+	else
+	{
+		print " (-",&hms(-$more)," more)\n";
+	}
+
+}
+print "\n";
+
+sub hour
+{
+	local ($_) = @_;
+	#print "Hour, _=$_\n";
+	#$1 = $2 = 0;
+	# m#\w+\s+\d+/\s*\d+/\s*\d+\s+(\d+):(\d+)#;
+	m#(\d+):(\d+)#;
+	$1 + $2 / 60;
+}
+
+sub hms
+{
+	local ($_,$h,$m) = @_;
+	$h = int ($_ + 1.0/120);
+	$m = int (60 * ($_-$h));
+	$_ = sprintf ("%02ld:%02ld", $h, $m);
+}
+
+sub mytime {
+	local($time) = time;
+	local($[) = 0;
+	local($sec, $min, $hour, $mday, $mon, $year, $wday, $yday, $isdst);
+	local (@DoW) = ('Sun','Mon','Tue','Wed','Thu','Fri','Sat');
+	local (@MoY) = ('Jan','Feb','Mar','Apr','May','Jun',
+		  'Jul','Aug','Sep','Oct','Nov','Dec');
+
+	($sec, $min, $hour, $mday, $mon, $year, $wday, $yday, $isdst) =
+		localtime($time);
+
+	# $year += ($year < 70) ? 2000 : 1900;
+	#sprintf("%3s %2d, %4d",	$MoY[$mon], $mday, $year);
+
+	$now = $hour + $min/60;
+
+	sprintf ("%3s %2d/%2d/%2d %2d:%02d  ", 
+		$DoW[$wday], $mon+1, $mday, $year, $hour, $min);
+}

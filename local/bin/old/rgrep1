@@ -1,0 +1,108 @@
+#!/usr/bin/perl
+#-*-Perl-*-
+
+$IGNORE_CASE = 0;
+$INVERT_SENSE = 0;
+while ($_=$ARGV[0])
+{
+    last unless /^-/;
+    $_ = shift @ARGV;
+    $IGNORE_CASE = 1, next if /^-i/i;
+    $INVERT_SENSE = 1, next if /^-v/i;
+}
+
+print (<<EOL), exit(1) unless @ARGV;
+Usage 
+    rgrep [-i] regular-expression fileglob1 [fileglob2...]
+Grep into a directory tree, recursively visit files below
+
+Command Line Options:
+    -i         Do case insensitive, default case sensitive
+
+You might try:
+    rgrep interrupt *.v
+	to find all .v files under the current dir with 'interrupt' in them
+    rgrep codec_ /atmel/lode/sources/jun_19/RTL
+	where .../RTL is just a directory
+EOL
+
+#use strict;
+#use Carp;
+use File::Find;			# Find()
+use File::Spec;			# The / character
+
+$pat = shift;
+$pat = $IGNORE_CASE ? qr/$pat/i : qr/$pat/;
+
+# Flush stdout
+$| = 1;				
+
+# Run through the globs list (assuming they are different directories)
+# Probably should check if not different directories
+for (@ARGV)
+{
+    if (-d $_)
+    {
+	# just a dir, use * as glob
+	$glob = '*';
+    }
+    else
+    {
+	# Not a dir, see if there is a dir spec'd
+	if (s:/([^/]+)$::)
+	{
+	    # Yes there is a path, so go with it
+	    $glob = $1;
+	}
+	else
+	{
+	    # No path, so prepend ./
+	    $glob = $_;
+	    $_ = '.';
+	}
+    }
+#    print "dir = $_  glob = $glob = ", join (',',glob("$_/$glob")), "\n\n";
+    find ({wanted => \&wanted, no_chdir =>1}, $_);
+}
+print "\n";
+
+sub wanted
+{
+    # Only want directories, because we will then use glob to get files
+    return unless -d;
+
+#    print "Trying dir $File::Find::name...glob=$glob\n";
+
+    # For each file specified by glob...
+    for (glob (File::Spec->catfile ($File::Find::name, $glob)))
+    {
+	my $file = $_;
+
+#	print "Trying file $file...\n";
+
+	# Check for being a reasonable file to look at
+	next unless -e $_ && -f _;
+
+	unless (open (FIN, $_))
+	{
+	    print STDERR "Can't open $file for reading\n";
+	    next;
+	}
+
+	# Grep
+	while (<FIN>)
+	{
+	    if (/$pat/o)
+	    {
+		chomp;
+
+		# In case it is binary, chop to length and map ctrl to .
+		substr ($_, 150) = '' if (length $_ > 150);
+		tr/\x00-\x08\x0a-\x1f\x80-\xff/./;
+
+		print "$file($.):$_\n";
+	    }
+	}
+	close FIN;
+    }
+}

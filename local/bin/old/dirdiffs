@@ -1,0 +1,48 @@
+#!/usr/bin/perl
+
+# Generic directory-of-files differencer
+# Usage:
+#	dirdiffs <directory1> <directory2>
+# Will put differences on stdout
+
+$| = 1;
+$dir1 = shift;
+$dir2 = shift;
+die "usage: dirdiffs <directory1> <directory2>\n" unless $dir2;
+&dirdiff ($dir1, $dir2);
+
+sub dirdiff
+{
+    my ($dir1, $dir2) = @_;
+    my (@f);
+    opendir (FIN, $dir1) or die;
+    @f = readdir (FIN);
+    closedir (FIN);
+    for (sort @f)
+    {
+	if (-f "$dir1/$_")
+	{
+	    if (-f "$dir2/$_")
+	    {
+		print "*"x30," $dir1/$_ \n"; # ,"*"x30,"\n";
+		print `diff -b $dir1/$_ $dir2/$_`;
+	    }
+	    else
+	    {
+		push @nofiles, "$dir2/$_";
+	    }
+	}
+	elsif (-d _)
+	{
+	    next if /^\.\.?$/;
+	    &dirdiff ("$dir1/$_", "$dir2/$_");
+	}
+    }
+}
+
+print "*"x78,"\n";
+for (@nofiles)
+{
+    print "NO SUCH FILE AS $_\n";
+}
+

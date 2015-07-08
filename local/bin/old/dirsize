@@ -1,0 +1,51 @@
+#!/usr/bin/perl
+
+$d = "/home/atmel/rob";
+$d = ".";
+
+opendir (DIR, $d) || die "Can't open dir $d\n";
+@filenames = readdir (DIR);
+closedir (DIR);
+
+#(@dirs) = sort grep !/^\./, (grep -d, @filenames);
+#print join(' ', @dirs), "\n";
+
+#(@rawsizes) = map `du -s $_`, @dirs;
+#print join(' ', @rawsizes), "\n";
+
+#(@sizes) = map /\s*(\d+)\s+/, @rawsizes;
+#print join(' ', @sizes), "\n";
+
+#for (@dirs)
+#{
+#	($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,
+#	 $blksize,$blocks) = stat $_;
+#	
+#	push @dates, scalar localtime $mtime;
+#}
+#for (0..$#dirs)
+#{
+#	printf ("%5d %-20s %s\n", $sizes[$_], $dirs[$_], $dates[$_]);
+#}
+
+for (@filenames)
+{
+	next unless -d;
+	next if /^\./;
+	($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,
+	 $blksize,$blocks) = stat _;
+	$rawsize = `du -s $_`;
+	($size) = $rawsize =~ /\s*(\d+)\s*/;
+
+	push @list, "$mtime,$size,$_";
+}
+
+for (sort @list)
+{
+	($mtime, $size, $dir) = split /,/;
+	$date = scalar localtime $mtime;
+#	print $_, $date,"\n";
+	printf ("%5d %-20s %s\n", $size, $dir, $date);
+}
+
+#print join ("\n", @list);

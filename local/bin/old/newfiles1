@@ -1,0 +1,15 @@
+#!/usr/bin/perl
+
+# My own version of find.  Very short
+
+&find (shift);
+sub find ($)
+{
+    opendir (DIR, my $dir = shift) or die;
+    for (grep s:^:$dir/:, grep !/^\.\.?$/, sort readdir (DIR))
+    {
+#	next if -M $_ > 6;
+	print "$_\n";
+	find ($_) if !-l $_ and -d _;
+    }
+}

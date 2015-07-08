@@ -1,0 +1,17 @@
+#!/usr/bin/perl
+
+$sol = `uname -r` =~ /^5./;
+
+open (FIN, "/bin/mount |") || open (FIN, "/etc/mount |") || die;
+while (<FIN>)
+{
+    ($mnt, $part) = /^(\S+) on (\S+)/;
+    ($mnt, $part) = ($part, $mnt) unless $sol;
+
+    $m{$mnt} = $part;
+}
+
+for (sort {$m{$a} cmp $m{$b} || $a cmp $b} keys %m)
+{
+    printf ("%-30s on %s\n", $_, $m{$_});
+}

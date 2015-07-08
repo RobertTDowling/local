@@ -1,0 +1,251 @@
+#!/usr/bin/perl
+#@rem = ' -*-Perl-*-
+#@echo off
+#perl -S %0.bat %1 %2 %3 %4 %5 %6 %7 %8 %9
+#goto endofperl
+#';
+# use Wild
+
+$IGNORE_CASE = 0;
+$HIDE_NAMES = 0;
+$INVERT_SENSE = 0;
+$UNTIL = 0;
+$AFTER = 0;
+$BEFORE = 0;
+$DEBUG = 0;
+$RECURSE = 0;
+while ($_=$ARGV[0])
+{
+    last unless /^-/;
+    $_ = shift @ARGV;
+    $AFTER = $1, next if /^-a(\d+)/i;
+    $BEFORE = $1, next if /^-b(\d+)/i;
+    $HIDE_NAMES = 1, next if /^-h/i;
+    $IGNORE_CASE = 1, next if /^-i/i;
+    $UNTIL = qr/$1/, next if /^-u(.*)/i;
+    $INVERT_SENSE = 1, next if /^-v/i;
+    $DEBUG = 1, next if /^-d/i;
+    $RECURSE = 1, next if /^-r/i;
+}
+
+print (<<EOL), exit(1) unless @ARGV;
+Usage:
+  pgrep [options] '<re>' <glob1> [<glob2> ...]
+Find regular expression <re> in all files that match glob(<glob1> ...)
+Note: The file glob can be like */*/*.c.  Quote <re> 
+to protect it from the shell.
+
+Command Line Options:
+  -a#        Number of lines to show after, default 0
+  -b#        Number of lines to show before, default 0
+  -d         Dump debugging information about recursive run
+  -h         Don't show file names at all
+  -i         Do case insensitive, default case sensitive
+  -r         Recursively search for files
+  -u<re2>    Show all after pattern up until <re2> matches
+  -v         Invert sense of match
+Not Implemented Yet:
+  -l         Only show names of files that have a match.
+  -n         Give line numbers
+With -r, patterns consist of a directory component and a glob component.
+Quote <globs> to protect them from the shell.  Without -r, don't quote.
+EOL
+
+# Want something like 
+#  pgrep -i "a[0-3]\s*=\s*lreg\s*=" j:\gsm\edward\lode\*.asm
+
+use File::Find;			# Find()
+use File::Spec;			# The / character
+
+# Get pattern
+$pat = shift;
+$pat = $IGNORE_CASE ? qr/$pat/i : qr/$pat/;
+
+$N = 0;
+
+# Run through the globs list, (assuming they are different directories)
+# turning each one into a directory/glob pair, which we run find on,
+# passing the glob in global $glob
+# (Probably should check if not different directories)
+if ($RECURSE)
+{
+    for (@ARGV)
+    {
+	# Fix up leading ~
+        s.^(~[^/]*).glob $1.e;
+
+	# Just a dir, append '*' as glob
+	$_ = "$_/*" if -d $_;
+
+	# No path, so prepend './'
+	$_ = "./$_" unless m|/|;
+
+	# Split directory from glob
+	($_, $glob) = m|(.*)/(.*)|;
+
+	print "dir = $_  glob = $glob = ", join (',',glob("$_/$glob")), "\n\n" if $DEBUG;
+	find ({wanted => \&wanted, no_chdir =>1}, $_);
+    }
+}
+else
+{
+    for my $file (@ARGV)
+    {
+	pgrep ($file);
+    }
+}
+print "$N Found\n" unless $HIDE_NAMES;
+
+sub wanted
+{
+    # Only want directories, because we will then use glob to get files
+    return unless -d;
+
+    print "Trying dir $File::Find::name...glob=$glob\n" if $DEBUG;
+
+    # For each file specified by glob...
+    for my $file (glob (File::Spec->catfile ($File::Find::name, $glob)))
+    {
+	pgrep ($file);
+    }
+}
+
+sub pgrep ($)
+{
+    my $file = shift;
+
+    print "Trying file $file...\n" if $DEBUG;
+
+    # Check for being a reasonable file to look at
+    return unless -e $file && -f _;
+
+    unless (open (FIN, $file))
+    {
+	print STDERR "Can't open $file for reading\n";
+	next;
+    }
+    
+    # Grep
+    my @before = ("") x ($BEFORE);
+    my $on=0;
+    while (<FIN>)
+    {
+	$n=$AFTER, $on=2 if $INVERT_SENSE ? !/$pat/o : /$pat/o;
+	if ($on>1)
+	{
+	    $on--;
+	    $N++;
+	    print "$file($.):" unless $HIDE_NAMES;
+	    print "\n" if !$HIDE_NAMES && ($AFTER || $BEFORE || $UNTIL);
+	    print @before if $BEFORE;
+	}
+	print fix() if $on;
+	$on=0 if $UNTIL ? /$UNTIL/o : !$n;
+	$n-- if $n;
+	if ($BEFORE)
+	{
+	    shift @before; 
+	    push @before, fix();
+	}
+    }
+    close FIN;
+}
+
+sub fix ()
+{
+    chomp;
+
+    # In case it is binary, chop to length and map ctrl to .
+    substr ($_, 150) = '' if (length $_ > 150);
+    tr/\x00-\x08\x0a-\x1f\x80-\xff/./;
+
+    $_ . "\n";
+}
+
+__END__
+
+Tests:
+
+    pgrep -d '#.*/perl' '/usr/local/rob/a*' '~/b*'
+    pgrep -d '#.*/perl' '/usr/local/rob/a*' '/home/a/b*'
+
+    want dir-glob to be
+	Just glob Dir	Dir+Glob
+
+	~		~/*.c
+	~rob		~rob/*.c
+	~rob/bar	~rob/bar/*.c
+
+	/		/*.c
+	/usr		/usr/*.c
+			/usr/*/*.c
+	/usr/*/bar	/usr/*/bar/*.c
+
+	bar		bar/*.c
+			bar/*/*.c
+	bar/*/foo	bar/*/foo/*.c
+
+1) Expand leading ~ as csh does
+2) If not recursing, then just use glob on whole string
+Below, assume recursing
+3) If there is a glob in the last component, separate it: recurse to find all subdirectories and use inside each one
+4) if there isn't a glob in last component, append "/*" and do 3)
+5) If there is only a glob, prepend "./" and do 3)
+
+Could have -r mean "run find & glob's become re's on find's output"
+
+	Glob Pat		Dir			Glob
+	~			/home/a			*
+	~rob			/home/rob		*
+	~jack/*.c		/home/jack		*.c
+	
+	/			/			*
+	/usr/*/lib/*.lib	/usr/*/lib		*.lib
+
+	# Just a dir, append '*' as glob
+	$_ = "$_/*" if -d $_;
+
+	# No path, so prepend './'
+	$_ = "./$_" unless m|/|;
+
+	# Split directory from glob
+	($_, $glob) = m|(.*)/(.*)|;
+
+
+	    # Not a dir, see if there is a dir spec'd
+	    if (s:/([^/]+)$::)
+	    {
+		# Yes there is a path, so go with it
+		$glob = $1;
+	    }
+	    else
+	    {
+		
+		$glob = $_;
+		$_ = '.';
+	    }
+	}
+
+	if (-d $_)
+	{
+	    # just a dir, use * as glob
+	    $glob = '*';
+	}
+	else
+	{
+	    # Not a dir, see if there is a dir spec'd
+	    if (s:/([^/]+)$::)
+	    {
+		# Yes there is a path, so go with it
+		$glob = $1;
+	    }
+	    else
+	    {
+		# No path, so prepend ./
+		$glob = $_;
+		$_ = '.';
+	    }
+	}
+
+:endofperl
+

@@ -1,0 +1,16 @@
+#!/usr/bin/perl
+
+# Lgrep: grep with the last n lines
+# 	lgrep pattern n
+
+
+$pat = shift;
+$n = shift;
+
+for (1..$n) { push @last, "???\n" }
+while (<>)
+{
+	print @last,$_,"\n" if /$pat/o;
+	push @last, $_;
+	shift @last;
+}

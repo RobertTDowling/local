@@ -1,0 +1,40 @@
+#!/usr/bin/perl
+
+use Time::HiRes qw (time);
+use Cwd;
+
+open (FLOG, ">>/home/atmel/rob/iotest.log");
+
+$F = 'IOTEST.TEST';
+chomp ($sys = `uname -n`);
+$cwd = getcwd;
+
+N:
+for ($N=1; $N<1024; $N*=2)
+{
+    for $L (1..3)
+    {
+	$s = "";
+	for (0..127)
+	{
+	    $s .= sprintf ("%c", rand % 255);
+	}
+	$t = time();
+	open (FOUT, ">$F");
+	for (1..$N)
+	{
+	    syswrite (FOUT, $s x (8*1024));
+	}
+	close FOUT;
+	$del = (time-$t);
+	$res = $del/$N;
+	unlink $F;
+	next N if $del < .25;
+	printf ("%-8s %-20s %3d MB: %8f sec: %8f sec/MB = %8f MB/sec\n", 
+		$sys, $cwd, $N, $del, $res, 1/$res);
+	printf FLOG ("%-8s %-20s %3d MB: %8f sec: %8f sec/MB = %8f MB/sec\n", 
+		$sys, $cwd, $N, $del, $res, 1/$res);
+    }
+    last if $del > 3;
+}
+

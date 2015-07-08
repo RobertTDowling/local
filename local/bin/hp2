@@ -1,0 +1,369 @@
+#!/usr/bin/perl
+@rem = '-*-Perl-*-
+@echo off
+if "%OS%" == "Windows_NT" goto WinNT
+perl -x -S "%0" %1 %2 %3 %4 %5 %6 %7 %8 %9
+goto endofperl
+:WinNT
+perl -x -S "%0" %*
+if NOT "%COMSPEC%" == "%SystemRoot%\system32\cmd.exe" goto endofperl
+if %errorlevel% == 9009 echo You do not have Perl in your PATH.
+if errorlevel 1 goto script_failed_so_exit_with_non_zero_val 2>nul
+goto endofperl
+@rem ';
+#!perl
+#line 15
+    eval 'exec c:\perl\bin\MSWin32-x86\perl.exe -S $0 ${1+"$@"}'
+	if $running_under_some_shell;
+
+#
+# New and improved HP2: Runs on NT, 98, Linux, 1,2,3 cols, etc
+# 5/21/02 Fixes for \r\n snafus across win/unix.  New page sizes for font=6
+# 5/22/02 Add binmode FOUT; Add longest line/wrapped line statistics. 
+# 5/22/02 Better stats
+# 5/29/02 Add ^C as column break character.  Rearrange source
+# 5/30/02 Was not printing filename.  Fix for DOS \r chars in line
+# 5/31/02 -t not working: tab_width was called tab_stop
+# 8/15/02 Add documentation on defaults
+# 8/19/02 Forgot to implement -f9 and -f4 page size settings.
+# 12/9/02 Can't handle paths in finenames
+# 8/10/04 -k: pack_files option
+# 7/22/05 Many columns
+#
+
+#!/usr/bin/perl
+
+# use Wild;
+
+help(), exit() unless @ARGV;
+
+$top_margin = 0;
+$left_margin = 0;
+$pack_files = 0;
+
+# Defaults
+$landscape=1; $tab_width=8; $font_size=6; $pages_up=3; $page_cols=80; # Hp3col
+$max_width = 0; # Default: don't use max_width to compute pages_up
+
+open (FOUT, ">page.out") || die $!;
+binmode FOUT;
+print FOUT "\x1bE";	# Reset printer... only give this once
+
+$options_changed = 1;
+for (@ARGV)
+{
+    option ($1), next if /^-(.+)/;     # /^[-\/](.*)/;
+    next if /^page.out$/;
+
+    # Only re-setup if options changed
+    print_setup (), $options_changed = 0 if $options_changed;
+
+    page ($_);
+}
+eject_page() if $pack_files && $col != $left_margin;
+
+##############################################################################
+
+sub help ()
+{
+    print <<EOL;
+# Multi-column Page Formatter for HP Laserprinters using HPGL.
+# Version 1.3 7/22/05 Robert Dowling rob\@rtdti.com
+# Wildcard are expanded under Win32 with 'use Wild' module of Perl 5.8:
+##  # Wild.pm - emulate shell @ARGV expansion on shells that don't
+##  use File::DosGlob;
+##  @ARGV = map {
+##      my @g = File::DosGlob::glob($_) if /[*?]/;
+##      @g ? @g : $_;
+##  } @ARGV;
+##  1;
+# Under Unix, wildcards are expanded by the shell.
+##################################################################
+# Usage:
+#     hp [options] file1 file2 ...
+# Options:
+# -t#  Tab stop (default 8)
+# -l   Orient landscape (default)
+# -p   Orient portrait
+# -f#  Font pt size: 4,6 or 9 (default 6)
+# -c#  Number of pages up (number of columns of output, 1-3; default 3)
+# -z#  Legacy: 1=HP1WIDE, 2=HP, 3=HP3COL
+# -k   Pack files onto same page with column breaks (^C) instead of page breaks
+# -h or -?  Help
+# -w#  Set max width of a column, and compute number pages up (can't use -c)
+# -    Process stdin
+#
+# Defaults: -l -t8 -f6 -c3
+EOL
+}
+
+sub option ($)
+{
+    $_ = shift;
+    help(), return if /^[?h]/i;
+    $tab_width = $1, return if /^t(\d+)/i;
+
+    $pack_files = 1 if /^k/i;
+    $landscape = 0 if /^p/i;
+    $landscape = 1 if /^l/i;
+    $pages_up = $1 if /^c(\d+)/i;
+    $font_size = $1 if /^f(\d+)/i;
+    $max_width = $1 if /^w(\d+)/i;
+    if (/^z(\d+)/i)
+    {
+	$pages_up = $1;
+	$font_size = 6;
+	if ($1 == 1)
+	{
+		$landscape = 0;	# HP1WIDE for super wide output
+		$page_cols = $total_page_cols;
+	}
+	elsif ($1 == 2)
+	{
+		$landscape = 1;	# HPWIDE
+		# $page_cols = 119;
+	}
+	elsif ($1 == 3)
+	{
+		$landscape = 1;	# HP3COL
+		# $page_cols = 119;
+		# $page_cols = 80;
+	}
+    }
+    $options_changed = 1;
+}
+
+sub page ($)
+{
+    # Globals
+    $filename = shift;
+    $pmaxcol = 0;
+    $pmaxline = 0;
+    $pwrapped = 0;
+    if ($_ eq '-')
+    {
+	*FIN = *STDIN;
+	$filename = 'stdin';
+    }
+    else
+    {
+	open (FIN, $filename) || 
+	    die "Can't open file '$filename' for processing\n";
+    }
+    print "Processing '$filename': ";
+
+    unless ($pack_files)
+    {
+	$page_num = 0;
+    }
+    init_page () unless $pack_files && $NOT_FIRST_FILE++;
+    accumulate (sprintf ("******* %s ********", $filename)) if $pack_files;
+
+    while (<FIN>)
+    {
+	s/\x0d//g;
+	chomp;
+
+	# Be sure to not just ignore blank lines
+	proc_line ("") unless length;
+
+	# Break lines around ^L and ^C:
+	# make this^Lthat\n -> this\n^Lthat
+	for (split /([\x0c\x03])/)
+	{
+	    eject_column (), next if /\x03/;
+	    eject_page (), next if /\x0c/;
+	    proc_line ();
+	}
+    }
+    $pack_files ? eject_column() : eject_page ();
+    $pmaxline = $.;
+    close (FIN);
+
+    printf " %d Pages, %d wrapped lines.  Max=(%dx%d)\n", 
+        $page_num-1, $pwrapped, $pmaxcol, $pmaxline;
+}
+
+##############################################################################
+
+# Process one input line.  May span many output lines.
+sub proc_line ()
+{
+    # expand tabs
+    while (s/^([^\t]*)\t/ $1 . ' 'x($tab_width-length($1)%$tab_width) /e)
+       { ; }
+    my $l = length ($_);
+    $pmaxcol=$l if $pmaxcol < $l;
+
+    accumulate ("") if $l==0; # Accumulate something on empty lines
+
+    # Process each output line chunk from input line
+    while ($l)
+    {
+	# Rest of line fits, just accumulate it
+	accumulate ($_), last if ($l<$page_cols);
+
+	# We've had to wrap a line.  Accumulate beginning and wrap rest.
+	$pwrapped++;  
+	accumulate (substr ($_, 0, $page_cols));
+	$_ = substr ($_, $page_cols);
+	$l = length ($_);
+    }
+}
+
+# Collect exactly one line of data.
+# Guaranteed to not be too long.  Will advance line position.
+sub accumulate ()
+{
+    my ($l);
+    local $_ = shift;
+    $l = length ($_);
+    # print "accum=$l=$_\n";
+    substr ($p[$line], $col, $l) = $_;
+    eject_column () if (++$line >= $page_lines);
+}
+
+# Move to top of next column
+sub eject_column ()
+{
+    $line = $top_margin+2;
+    $col = $col + $page_cols + $page_gutter;
+    eject_page () if ($col+$page_cols > $total_page_cols);
+}
+
+# Cause page to be printed (and reset to top of next page)
+sub eject_page ()
+{
+    for (0..$total_page_lines-1)
+    {
+	$_ = shift @p;
+	s/ *$//g;
+	print FOUT "$_\x0d\x0a";
+    }
+    print FOUT "\x0c";
+    init_page ();
+}
+
+# Do guts of resetting to top of page.
+# Put in header; clear out page.
+sub init_page ()
+{
+    my ($q, $l);
+
+    for (0..$total_page_lines-1)
+    {
+	$p[$_] = ' ' x $total_page_cols;
+    }
+  
+    $q = ctime (time);
+    $l = length ($q);
+    substr ($p[0], 0, $l) = $q;
+
+    $q = sprintf ("%s:%3d", $filename, ++$page_num);
+    $l = length ($q);
+    substr ($p[0], -$l, $l) = $q; 
+
+    $line = $top_margin+2;
+    $col = $left_margin;
+    $up_num = 0;
+}
+
+##############################################################################
+
+sub print_setup ()
+{
+    if ($font_size == 9)
+    {
+print "Fontsize 9 or 4 needs fixing in print_setup... Look out for 4 columns\n";
+	print FOUT "\x1b&l${landscape}O";	# Landscape=1, Portr=0
+	print FOUT "\x1b(s0p16.67h8.5v0s0b0T";	# Lptr 16.7cpi 8.5pt
+	print FOUT "\x1b&l8D";			# 8 LPI
+	if ($landscape)
+	{
+	    $total_page_cols = 178;
+	    $total_page_lines=  60;
+	    # $page_cols = (178, 85, 58)[$pages_up-1];
+	}
+	else
+	{
+	    $total_page_cols = 135;
+	    $total_page_lines=  80;
+	    # $page_cols = (135, 66, 44)[$pages_up-1];
+	}
+    }
+    if ($font_size == 6)
+    {
+	print FOUT "\x1b&l${landscape}O";	# Landscape=1, Portr=0
+	print FOUT "\x1b(s0p24h6v0s0b6T";	# Universe 24cpi 6pt
+	print FOUT "\x1b&l12D";			# 12 LPI
+	if ($landscape)
+	{
+	    $total_page_cols = 245;	# was 244
+	    $total_page_lines=  90;
+	    # $page_cols = (245, 119, 80)[$pages_up-1];
+	}
+	else
+	{
+	    $total_page_cols = 185;	# Was 186
+	    $total_page_lines= 119;	# was 120
+	    # $page_cols = (185,  90, 60)[$pages_up-1];
+	}
+    }
+    if ($font_size == 4)
+    {
+	print FOUT "\x1b&l${landscape}O";	# Landscape=1, Portr=0
+	print FOUT "\x1b(s0p36h4v0s0b6T";	# Universe 36cpi 4pt
+	print FOUT "\x1b&l16D";			# 16 LPI
+	if ($landscape)
+	{
+	    $total_page_cols = 390;
+	    $total_page_lines= 120;
+	    # $page_cols = (390, 193, 128)[$pages_up-1];
+	}
+	else
+	{
+	    $total_page_cols = 300;
+	    $total_page_lines= 160;
+	    # $page_cols = (300, 148, 98)[$pages_up-1];
+	}
+    }
+
+    if ($max_width)
+    {
+	# user wants us to compute pages_up
+	$pages_up = int ($total_page_cols / ($max_width + 1));
+    }
+    $page_cols = int (($total_page_cols - ($pages_up-1)) / $pages_up);
+    $total_page_lines--;
+
+    $page_lines = $total_page_lines;
+    $page_gutter = ($pages_up-1) ? 
+	int(($total_page_cols - $pages_up * $page_cols) / ($pages_up -1)) : 0;
+    $useful_lines = $page_lines - 2;
+
+    printf "Setup: Landscape=%s (%dx%d). %d pages up (%dx%d) Gutter=%d Line/Pg=%d\n",
+    	$landscape ? "Yes" : "No", $total_page_cols, $total_page_lines,
+	$pages_up, $page_cols, $useful_lines, $page_gutter,
+	$pages_up * $useful_lines;
+}
+
+##############################################################################
+sub ctime ()
+{
+    local($time) = @_;
+    local($[) = 0;
+    local($sec, $min, $hour, $mday, $mon, $year, $wday, $yday, $isdst);
+    @DoW = ('Sun','Mon','Tue','Wed','Thu','Fri','Sat');
+    @MoY = ('Jan','Feb','Mar','Apr','May','Jun',
+	    'Jul','Aug','Sep','Oct','Nov','Dec');
+
+    ($sec, $min, $hour, $mday, $mon, $year, $wday, $yday, $isdst) =
+        ($TZ eq 'GMT') ? gmtime($time) : localtime($time);
+
+    $year += ($year < 70) ? 2000 : 1900;
+    sprintf("%3s  %3s %2d %4d %2d:%02d:%02d",
+      $DoW[$wday], $MoY[$mon], $mday, $year, $hour, $min, $sec);
+}
+
+__END__
+:endofperl

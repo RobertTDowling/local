@@ -1,0 +1,14 @@
+#!/usr/bin/perl
+
+# Format a man entry for printing (suitable for hp3col)
+
+$lookup = shift;
+
+# Fails: open (FIN, "man man |") || die;
+$_ = `man $lookup | col -b`;
+
+# Fixup
+s/\n\n\n\n.*\n\n\n\n\n\n.*\n\n//g;
+
+# output
+print;

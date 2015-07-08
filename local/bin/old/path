@@ -1,0 +1,6 @@
+#!/usr/bin/perl
+
+for (split /:/, $ENV{PATH}) 
+{
+    print "$_\n";
+}

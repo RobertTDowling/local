@@ -1,0 +1,19 @@
+[user]
+	name = Robert T Dowling
+	email = rpncalcn@gmail.com
+[diff]
+	tool = ediff
+[difftool "ediff"]
+	cmd=/home/rob/local/bin/ediff \"$LOCAL\" \"$REMOTE\"
+[difftool]
+	prompt = false
+[merge]
+	tool = emerge
+[mergetool "emerge"]
+	cmd=/home/rob/local/bin/emerge \"$LOCAL\" \"$BASE\" \"$REMOTE\" \"$MERGED\"
+[mergetool]
+	prompt = false
+[core]
+	autocrlf = input
+[credential]
+	helper = cache --timeout=3600

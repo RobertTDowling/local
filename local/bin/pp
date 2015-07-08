@@ -1,0 +1,103 @@
+#!/usr/bin/perl
+#
+# pp: Perl Prompt: Robert Dowling: rob at rtdti.com (pod at __END__)
+#
+'(C) Copyright 2004-2006 Robert Dowling.';
+#
+#    This program is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; either version 2 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program; if not, write to the Free Software
+#    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+# R Dowling  rob at rtdti.com
+#
+# Wed Nov 22 05:37:13 PST 2006 Port to Term::ReadLine from my own readline
+# Sat Apr 29 14:16:45 PDT 2006 Some documentation (a man page in POD)
+
+# use ExtUtils::testlib;
+# use readline;
+use Term::ReadLine;
+# use POSIX qw(floor);
+
+my $term = new Term::ReadLine ("pp");
+$|=1;
+while (defined (my $pp_ = $term->readline("Perl> ")))
+{
+    chomp $pp_;
+    last if $pp_ =~ /\bquit\b/i;
+    last if $pp_ =~ /^q$/i;
+    my @x = eval ($pp_);
+    if ($@)
+    {
+        local $_ = $@;
+        chomp; 
+        print "Error: $_\n";
+        $@ = $! = "";
+    }
+    else
+    {
+        print "Returns [",join(',',@x),"]\n";
+    }
+}
+
+__END__
+
+=head1 NAME
+
+pp - Perl Prompt: a small interactive prompt and evaluator for Perl using
+readline(3).
+
+=head1 SYNOPSIS
+
+B<pp>
+
+=head1 DESCRIPTION
+
+The B<pp> utility is a very simple, small, interactive prompt that passes
+input lines to perl(1) and then displays the results.  It uses the
+readline(3) package to allow for easy editing of the current or
+previous command lines.
+
+=head1 OPERATION
+
+Once started, B<pp> prompts the user for a line of input with
+
+	Perl> 
+
+That line is handed directly to perl's C<eval> in an array context
+and any return values are printed out joined with commas.  Naturally,
+the trailing semicolon is optional.
+
+You can exit B<pp> with the perl command C<exit>, or with the special
+keyword C<quit>, or with the single character C<q> or with EOF (^D on
+most systems).
+
+Example:
+
+	% pp
+	Perl> localtime (time)
+	Returns [24,47,14,29,3,106,6,118,1]
+	Perl> scalar localtime (time)
+	Returns [Sat Apr 29 14:47:28 2006]
+	Perl> quit
+	%
+
+=head1 SEE ALSO
+
+readline(3), Term::ReadLine(3pm), perl(1)
+
+=head1 AUTHOR
+
+Robert Dowling <F<rob at rtdti.com>>.
+Download from L<http://www.rtdti.com/sw>
+
+=cut

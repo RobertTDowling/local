@@ -1,0 +1,86 @@
+#!/usr/bin/perl
+@rem = ' -*-Perl-*-
+@echo off
+perl -S %0.bat %1 %2 %3 %4 %5 %6 %7 %8 %9
+goto endofperl
+';
+
+# use Wild
+
+$IGNORE_CASE = 0;
+$HIDE_NAMES = 0;
+$INVERT_SENSE = 0;
+$UNTIL = 0;
+$AFTER = 0;
+$BEFORE = 0;
+while ($_=$ARGV[0])
+{
+    last unless /^-/;
+    $_ = shift @ARGV;
+    $AFTER = $1, next if /^-a(\d+)/i;
+    $BEFORE = $1, next if /^-b(\d+)/i;
+    $HIDE_NAMES = 1, next if /^-h/i;
+    $IGNORE_CASE = 1, next if /^-i/i;
+    $UNTIL = qr/$1/, next if /^-u(.*)/i;
+    $INVERT_SENSE = 1, next if /^-v/i;
+}
+
+print (<<EOL), exit(1) unless @ARGV;
+Usage:
+  pgrep [-options] <re> <file1> <file2> ...
+Find regular expression <re> in all files that match glob(<file1> ...)
+Note: The file glob can be like */*/*.asm, which will levels of dir globs.
+
+Command Line Options:
+  -a#        Number of lines to show after, default 0
+  -b#        Number of lines to show before, default 0
+  -h         Don't show file names at all
+  -i         Do case insensitive, default case sensitive
+  -u<re2>    Show all after pattern up until <re2> matches
+  -v         Invert sense of match
+Not Implemented Yet:
+* -l         Only show names of files that have a match.
+* -n         Give line numbers
+* -r         Recursively search for files (somehow)
+
+EOL
+
+# Want something like 
+#  pgrep -i "a[0-3]\s*=\s*lreg\s*=" j:\gsm\edward\lode\*.asm
+
+# Get pattern
+$pat = shift;
+# print "Pattern='$pat'\n";
+$pat = $IGNORE_CASE ? qr/$pat/i : qr/$pat/;
+
+@before = ("") x ($BEFORE);
+$N = 0;
+while (<>)
+{
+    $n=$AFTER, $on=2 if $INVERT_SENSE ? !/$pat/o : /$pat/o;
+    if ($on>1)
+    {
+	$on--;
+	$N++;
+	print "$ARGV($.):" unless $HIDE_NAMES;
+	print "\n" if !$HIDE_NAMES && ($AFTER || $BEFORE);
+	print @before if $BEFORE;
+    }
+    print $_ if $on;
+    $on=0 if $UNTIL ? /$UNTIL/o : !$n;
+    $n-- if $n;
+    if ($BEFORE)
+    {
+	shift @before; 
+	push @before, $_;
+    }
+    if (eof)
+    {
+	close ARGV;
+	@before = ("") x ($BEFORE);
+    }
+}
+print "$N Found\n";
+
+__END__
+:endofperl

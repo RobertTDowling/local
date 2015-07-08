@@ -1,0 +1,33 @@
+#!/bin/bash
+
+i=`basename $1 .tex`
+ps_offset=0in,-0.75in
+pdf_offset=0in,-0.75in
+keep_aux=0
+keep_log=0
+PDF=${PDF:-1}
+PS=${PS:-0}
+if [ -e ~/.topsrc ]; then source ~/.topsrc; fi
+if [ -e .topsrc ]; then source .topsrc; fi
+
+date=`date '+%B %e, %Y'`;
+date=`date`
+date=`stat -c '%y' $i.tex | cut -c 1-19`
+file=`pwd`/$i.\\\{pdf,tex\\\}
+echo Latex: $i.tex Last modified=${date}
+
+# latex $i.tex
+latex "\def\myfilename{$file} \def\myfiledate{$date} \input $i"
+if [ "$PDF" != 0 ]; then
+    dvips -t letter -O $pdf_offset -o $i.ps $i.dvi
+    ps2pdf $i.ps
+    rm $i.ps
+fi
+if [ "$PS" != 0 ]; then
+    dvips -t letter -O $ps_offset -o $i.ps $i.dvi
+fi
+# Plain text
+# catdvi $i.dvi >! $i.ascii
+rm -f $i.bak $i.dvi $i.log
+if [ ! $keep_aux -a -e $i.aux ]; then rm $i.aux; fi
+if [ ! $keep_log -a -e $i.log ]; then rm $i.log; fi

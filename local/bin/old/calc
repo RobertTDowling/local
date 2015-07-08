@@ -1,0 +1,344 @@
+#!/usr/bin/perl
+#
+# Calc: RPN calculator: Robert Dowling: rob at rtdti.com (pod at __END__)
+#
+'(C) Copyright 2004-2006 Robert Dowling.';
+#
+#    This program is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; either version 2 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program; if not, write to the Free Software
+#    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+# R Dowling  rob at rtdti.com
+#
+# Sat May  1 14:04:27 UTC 2004
+# Fri Jun  4 07:24:59 UTC 2004
+# Sun Jun  6 14:37:22 UTC 2004 Fix order of - and /.  Add Neg
+# Fri Oct 22 10:47:00 PDT 2004 At least allow hex numbers by F, D
+# Sat Apr 29 14:16:45 PDT 2006 Some documentation (a man page in POD)
+#
+$|=1;
+
+use POSIX qw(floor);
+
+help ();
+
+@s = ();
+
+while (<>)
+{
+    chomp;
+    # @cmds = grep {!/^\s*$/} map { s/[,\s]//g; $_ } split /\b/;
+    # @scmds = map { sprintf ("%s:%d", $_,is_number($_)) } @cmds;
+    # @cmds = split;
+    @cmds = split /([\s\+\-\*\/%\^:\?&\|`~DuUoOsSFpPqQ])/; #`
+    # print "Calc: ",join(',',@cmds),"\n";
+    # print $_,"\n";
+    my ($a, $b);
+    for (@cmds)
+    {
+	if (is_number ($_))
+	{
+	    push @s, eval;
+	}
+	else
+	{
+	    if (/[\+\-\*\/%&\|]/)
+	    {
+		($a,$b)=splice @s,-2,2;
+		push @s, eval "$a $_ $b";
+	    }
+	    else
+	    {
+		pop @s if /d/i;
+		push @s, $s[-1] if /u/i;
+		push @s, $s[-2] if /o/i;
+		(($a,$b)=splice @s,-2,2), (push @s,$b,$a) if /s/i;
+		(($a,$b)=splice @s,-2,2), (push @s,$a+$b/60) if /:/i;
+		(($a,$b)=splice @s,-2,2), (push @s,$a**$b) if /\^/i;
+		(($a,$b)=splice @s,-2,2), (push @s,$a^$b) if /`/i;
+		($a=pop @s), (push @s,~$a) if /~/i;
+		($a=pop @s), (push @s,floor $a) if /f/i;
+		($a=pop @s), (push @s, $s[-$a]) if /p/i;
+		($a=pop @s), (push @s,-$a) if /n/i;
+		help() if /\?/;
+		exit if /[qx]/i;
+	    }
+	}
+    }
+    printstack ();
+}
+
+sub printstack ()
+{
+    # print "Stack = ",join('\\',@s),"\n";
+    return print "Stack empty\n" unless @s;
+    my $i=@s;
+    for (@s)
+    {
+	my ($q, $r, $s);
+	if (abs $_ < 1e20)
+	{
+	    $q = sprintf ("0x%x", $_);
+	    my $j = floor $_;
+	    my $k = ($_ - $j)*60;
+	    if ($j>=1000 || $j<=-100)
+	    {
+		$r = "-";
+	    }
+	    else
+	    {
+		$r = sprintf ("%3d:%02d", $j, $k+1e-6);
+	    }
+	}
+	else
+	{
+	    $q = $r = "-";
+	}
+	printf ("%2d: %20s %6s %20s\n", $i--, $q, $r, $_);
+    }
+}
+
+sub help ()
+{
+    print <<EOF;
+Calc: RPN calculator Robert Dowling rob at rtdti.com Sun Jun  6 14:37:22 UTC 2004
++,-,*,/,%,^,:,&,|,~,`xor,Floor,Neg,Drop,Swap,dUp,Over,Pick,0x,Quit,eXit,?help
+Example: Compute 6:
+    2 2 2 * +
+EOF
+}
+
+sub is_number ($)
+{
+    local $_ = shift;
+    return 1 if 0+$_;
+    return 1 if /^0x0+$/i;
+    return 1 if /^0+\.?/;
+    return 1 if /^\.0+/;
+    0;
+}
+__END__
+
+=head1 NAME
+
+calc - a small command line RPN calculator with hex/decimal and Forth stack
+
+=head1 SYNOPSIS
+
+B<calc>
+
+=head1 DESCRIPTION
+
+The B<calc> utility is an simple, small, command line interactive RPN
+calculator that supports decimal, hex and hours:minutes arithmetic,
+similar to dc(1).
+
+=head2 Primary Differences From dc(1)
+
+=over
+
+=item *
+
+The stack is automatically displayed as a prompt when B<calc> is
+waiting for more input.  The stack is displayed from bottom to top, so
+that the I<topmost> item is printed last, but is conveniently closest
+to the user's cursor as he enters the next line of input.  (And I
+think this is logical, since it preserves vertically the order that
+operands were pushed).  
+
+If the input is C<10 20.5 30> the stack will display as:
+
+=over
+
+ 3:                  0xa  10:00                   10
+ 2:                 0x14  20:30                 20.5
+ 1:                 0x1e  30:00                   30
+
+=back
+
+=item *
+
+The stack is displayed in multiple formats at once: hex,
+hours:minutes, and decimal.  At the left is the "depth" of each entry
+on the stack.  The topmost item is at depth I<1>.  
+
+B<Note:> This depth number is what is used with the B<P> operator
+for selecting the item to be "picked".
+
+=item *
+
+Stack manipulation commands are initials of Forth common stack
+manipulation words: C<drop>, C<swap>, C<dup>, C<over>, C<pick>.  Only
+C<dup> has the wrong initial (B<u>), as C<drop> is the most common
+operation.
+
+=item *
+
+The new C<:> operator is a handy operator for converting
+hours:minutes to fractional hours, while the stack automatically
+displays values in both hours:minutes and fractional hours.
+
+=back
+
+=head2 General Operation
+
+B<Calc> starts by giving a short help line and then it enters an
+infinite input loop, expecting a line of text from the standard input.
+This line is evaluated and any results left remaining on the stack are
+displayed.  The loop starts again, expecting and then processing another
+line of input.
+
+=head3 Parsing Operands
+
+Operands (numbers) are delimited by white space or an operator, and
+can be entered as decimal integers, floating point, hexadecimal
+integers using C's C<0xI<nnn>> notation, octal integers using C's
+C<0I<nnn>>, or binary integers using Perl's C<0bI<nnn>> notation.
+Because perl(1) is used to parse the numbers, it accepts all of
+perl's enhancements (see `perldoc perlnumber` and `perldoc perldata`)
+such as ignoring embedded underscores (_).
+
+	Input     Number
+	------    ------
+	100         100
+	0x100       256
+	0100         64
+	0b100         4
+	
+ 	1_000      1000
+	10.01     10.01
+	1e3        1000
+	1e+3      ERROR
+
+B<Note:> Scientific notation for numbers only works (at this time) for
+numbers with positive exponents, and the sign of the exponent must be
+omitted (because the B<+> or B<-> ends the number before it).
+
+To enter 6.67x10^(-11) you will have to compute it:
+
+	   Input         Result
+	------------    --------
+	6.67 1e11 /     6.67e-11
+
+B<Note:> Negative numbers I<cannot> be entered with a minus in front
+of them (e.g. -3) because the minus is parsed as the 'subtraction'
+operation.  Instead, either compute the negative or use the B<n>
+operator to negate the last number
+
+
+
+
+	Input   Result
+	------  ------
+	-3      ERROR
+	0 3 -     -3
+	3n        -3
+
+=head3 Parsing Operators
+
+All operators are single characters.  They can be packed up against each other
+or broken apart by white space or numbers.  They work in the stand RPN or Forth
+fashion of 'popping' off as many arguments as they need and then pushing a result back onto the stack.
+
+Noncommutative operators (i.e., B<->, B</>, B<%>, B<:>) accept their arguments
+in the order you would expect:
+
+	Input    Result
+	------   ------
+	3 2 /     1.5
+	
+=head2 Operators
+
+=over 8
+
+=item B<+ - * />
+
+Standard Arithmetic
+
+=item B<%>
+
+Modulo; e.g. C<5 2 %> gives C<1>
+
+=item B<^>
+
+Power; e.g. C<2 3 ^> gives C<8>
+
+=item B<& | ~>
+
+Standard C bitwise boolean operations
+
+=item B<`>
+
+The C bitwise XOR operation (since ^ is the power function)
+
+=item B<:>
+
+Combines hours and minutes into fractional hours; e.g. C<1 15> : gives C<1.25>
+
+=item B<f>
+
+Floor: C floor function
+
+=item B<n>
+
+Negate, change sign.  Same as C<0 s ->
+
+=item B<d>
+
+Drop: Remove top of stack.
+
+=item B<s>
+
+Swap: Exchange top two items on stack.
+
+=item B<u>
+
+Dup: Make a copy of top of stack; e.g. C<2 u +> gives C<4>
+
+=item B<o>
+
+Over: Make a copy of second on stack and put on top; e.g. C<1 2 - ->
+gives C<0>.
+
+=item B<P>
+
+Pick: Make a copy of the nth item on the stack; e.g. C<10 20 30 40 3
+p> gives C<10 20 30 40 20>.  B<u> is the same as C<1 p>.  B<o> is the
+same as C<2 p>.
+
+=item B<0xnnn>
+
+Enter a hex integer; e.g.  C<0x100> gives C<256>
+
+=item B<q>
+
+=item B<x>
+
+Exit calc
+
+=item B<?>
+
+Give a one-line summary of operations
+
+=back
+
+=head1 SEE ALSO
+
+dc(1), forth(1)
+
+=head1 AUTHOR
+
+Robert Dowling <F<rob at rtdti.com>>.
+Download from L<http://www.rtdti.com/sw>
+
+=cut

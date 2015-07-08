@@ -1,0 +1,8 @@
+#!/bin/bash
+if [ "x$3" == "x" ]; then
+    x="ediff \"$1\" \"$2\""
+else
+    x="ediff3 \"$1\" \"$2\" \"$3\""
+fi
+# emacs -fn "${emacsfont}-18*" -g 138x48+0+0 --exec "($x)"
+emacs -g 138x48+0+0 --exec "($x)"

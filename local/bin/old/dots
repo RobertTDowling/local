@@ -1,0 +1,7 @@
+#!/usr/bin/perl
+
+for ($i=0; $i<65/3;$i++)
+{
+	print "+   "x(160/4),"\n";
+	print "\n\n";
+}

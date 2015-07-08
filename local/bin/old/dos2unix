@@ -1,0 +1,2 @@
+#!/bin/csh
+perl -pi.bak -e s/\\015// $*

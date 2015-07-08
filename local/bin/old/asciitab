@@ -1,0 +1,18 @@
+#!/usr/bin/perl
+
+printf "    ";
+for $x (0..15)
+{
+	printf "%x ", $x;
+
+}
+printf "\n";
+for $y (map {$_*16} (2..15))
+{
+	printf "%02x: ", $y;
+	for $x (0..15)
+	{
+		printf "%c ", $y+$x;
+	}
+	print "\n";
+}

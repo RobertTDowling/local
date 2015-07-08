@@ -1,0 +1,25 @@
+#!/usr/bin/perl
+
+open (FIN, "diff ".join(" ",@ARGV)."|") || die;
+
+print "$ARGV[0]\n";
+print "     $ARGV[1]\n";
+
+while (<FIN>)
+{
+	# n1 a n3,n4
+	# n1,n2 d n3
+	# n1,n2 c n3,n4
+
+	next if /^---/;
+	if (/^\d/)
+	{
+		print ("==========\n");
+		next if ($n1,$n3) = /(\d+)a(\d+)/;
+		next if ($n1,$n3) = /(\d+).*d(\d+)/;
+		next if ($n1,$n3) = /(\d+).*c(\d+)/;
+	}
+	s/^</sprintf("%4d     :",$n1++)/e;
+	s/^>/sprintf("     %4d:",$n3++)/e;
+	print;
+}

@@ -1,0 +1,5 @@
+#/bin/csh
+# Set control up for xwindows
+xmodmap -e "remove lock = Caps_Lock"
+xmodmap -e "remove control = Control_R"
+xmodmap -e "add control = Caps_Lock"

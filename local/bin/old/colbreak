@@ -1,0 +1,44 @@
+#!/usr/bin/perl
+
+sub help ()
+{
+    print <<EOL;
+# usage
+#
+# colbreak N RE [files...]
+#
+#   Breaks lines in file into runs of no more than N lines.
+#   Makes breaks on Perl Regular Expression RE
+EOL
+}
+
+my $N = shift || (help(), exit(1));
+my $RE = shift || (help(), exit(1));
+
+my $sofar = 0;
+my @lines = ();
+
+sub flush ()
+{
+    if (@lines + $sofar >= $N)
+    {
+	print "\cc";
+	$sofar = 0;
+    }
+    for (@lines)
+    {
+	print;
+	$sofar++;
+    }
+    @lines = ();
+}
+
+while (<>)
+{
+    flush if /$RE/;
+    push @lines, $_;
+}
+flush;
+	
+	
+	

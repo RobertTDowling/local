@@ -1,0 +1,22 @@
+#!/usr/bin/perl
+
+my $duration = 2;
+# printf ("$]\n");
+
+# Wait for seconds to click over
+my ($st, $nt, $speed);
+$st = time;
+1 while (($nt = time) == $st);
+
+# Count how long for seconds to click over again...
+$nt += $duration;
+while (time < $nt)
+{
+    $speed++;
+}
+
+# /1000 for human size
+# /2 for test durations
+# Round to nearest 5
+$speed = 5 * int ($speed/1000/2/5); 
+print "$speed\n";

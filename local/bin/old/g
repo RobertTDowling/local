@@ -1,0 +1,8 @@
+#!/bin/bash
+
+# echo emacs -g 163x59 -f split-window-horizontally '--eval=(other-window 1)' '--eval=(split-window-vertically 7)' '--eval=(other-window -1)' $*
+
+# emacs -g 163x59 -f split-window-horizontally $*
+# emacs -fn 9x15 -g 150x59 -f split-window-horizontally $*
+
+emacs -fn 10x20 -g 136x44+0+0 -f split-window-horizontally $*

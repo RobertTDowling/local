@@ -1,0 +1,30 @@
+#!/usr/bin/perl
+
+# Generic directory-of-files differencer
+# Usage:
+#	dodiffs <directory>
+# Pipe a list of files on stdin (like: ls -1 | dodiffs dir)
+# Will put differences on stdout
+
+$| = 1;
+$dir = shift;
+die "usage: dodiffs <directory>\nlist of files on stdin\n" unless $dir;
+while (<>)
+{
+	chomp;
+	if (-f "$dir/$_")
+	{
+		print "*"x30," $_ ","*"x30,"\n";
+		print `diff -b $_ $dir/$_`;
+	}
+	else
+	{
+		push @nofiles, "$dir/$_";
+	}
+}
+
+print "*"x78,"\n";
+for (@nofiles)
+{
+	print "NO SUCH FILE AS $_\n";
+}

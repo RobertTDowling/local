@@ -1,0 +1,6 @@
+#!/bin/bash
+echo "emerge: We got these args '$1' '$2' '$3' '$4'..."
+# 1:LOCAL 2:BASE 3:REMOTE 4:MERGE
+cp $1 $4
+x="ediff3 \"$4\" \"$2\" \"$3\""
+emacs -g 138x48+0+0 --exec "($x)"

@@ -1,0 +1,16 @@
+#!/usr/bin/perl
+
+$| = 1;
+printf ("$]\n");
+
+for ($j=16384; $delta <2; $j*=2)
+{
+	$start = (times)[0];
+	for ($i=$j; $i>0; $i--)
+	{
+		;
+	}
+	$delta = (times)[0] - $start;
+	next unless $delta > .1;
+	printf ("%4.2f for %7d loops = %.3f\n", $delta, $j, $j/$delta/1000);
+}

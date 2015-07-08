@@ -1,0 +1,62 @@
+-rwxrwxr-x    1 a        a             288 Mar 14  2002 bindiff
+-rwxrwxr-x    1 a        a             443 Mar 31  2002 diffs
+-rwxr-xr-x    1 a        a             796 Dec 22  1998 dirdiffs
+-rwxr-xr-x    1 a        a             507 Dec  1  1998 dodiffs
+
+-rwxrwxr-x    1 a        a            1908 Jun  5 15:19 calc
+-rwxr-xr-x    1 root     root        17241 Jan 17  2000 ccalc
+
+-rwxr-xr-x    1 root     root           40 Oct  1  2001 dos2unix
+
+-rwxrwxr-x    1 a        a             282 Aug 19  1998 dump
+
+-rwxr-xr-x    1 root     root           52 Mar 28  2002 eth
+-rw-rw-r--    1 a        a             378 May  1 22:15 ppp
+-rwxr-xr-x    1 root     root           18 Dec 23  1998 ppp-on
+-rwxrwxr-x    1 a        a              20 Nov 29  2002 t
+
+-rwxr-xr-x    1 8714     51            229 Aug  2  2000 head1
+
+-rwxr-xr-x    1 root     root          232 Mar  6  1998 mymore
+-rwxr-xr-x    1 root     root          229 Aug  6  2000 manlp
+-rwxrwxr-x    1 a        a            8387 Dec  9  2002 hp2
+
+-rwxrwxr-x    1 a        a             223 Jul 11  1997 lgrep
+-rwxr-xr-x    1 8714     51           1797 Jul 28  2000 rgrep
+-rwxrwxr-x    1 a        a            2034 Mar 31 21:16 pgrep
+
+-rwxr-xr-x    1 root     root          556 Aug  9  2000 lsdate
+
+-rwxr-xr-x    1 root     root          256 Dec  5  1998 formata
+-rwsr-sr-x    1 root     root           24 Jan 17  1999 mounta
+-rwsr-sr-x    1 root     root           29 May 24  2000 mountcd
+-rwsr-sr-x    1 root     root           25 Jan 17  1999 umounta
+
+-rwxrwxr-x    1 root     root          313 Oct 25  2000 mymount
+
+-rwxr-xr-x    1 root     root          448 Nov 29  1998 newfiles
+
+-rwxrwxr-x    1 a        a             406 Jun  4 23:02 pp
+
+-rwxr-xr-x    1 root     root         2881 Dec  5  1998 r
+-rwxr-xr-x    1 root     root         1975 Dec  3  1998 rx
+-rwxr-xr-x    1 root     root         2958 Dec  6  1998 rx0
+-rwxr-xr-x    1 root     root         2370 Dec  5  1998 x
+
+-rwxr-xr-x    1 a        a              72 Jan  2  1999 retex
+-rwxrwxr-x    1 a        a            2183 Jan 10  1999 totex
+-rw-rw-r--    1 a        a             125 Feb 16  1999 tops
+
+
+-rwxr-xr-x    1 root     root          245 Aug 29  1999 sun-mops
+
+-rwsr-sr-x    1 root     root          531 Dec 16  2000 set-x-config-for-fb-bits
+-rwxr-xr-x    1 root     root           27 May 17  2000 vga-43
+-rwxr-xr-x    1 root     root           24 May 17  2000 vga-54
+-rwxr-xr-x    1 root     root           24 May 17  2000 vga-64
+-rwxr-xr-x    1 root     root           24 May 19  2000 vga-77
+-rwxr-xr-x    1 root     root           24 May 19  2000 vga-96
+
+-rwxr-xr-x    1 root     root         2701 Aug  3  2000 whiches
+
+-rwxrwxr-x    1 a        a             154 Nov 23  2000 x-fix-ctrl

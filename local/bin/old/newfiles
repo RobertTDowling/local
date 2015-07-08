@@ -1,0 +1,25 @@
+#!/bin/csh
+find / \( \
+	-path /proc -o \
+	-path /tmp -o \
+	-path /dev -o \
+	-path /var/lock -o \
+	-path \*/.netscape/cache -o \
+	-path \*/.netscape/xover-cache -o \
+	-path /usr/X11R6 -o \
+	-path /usr/doc -o \
+	-path /usr/lib/rhs -o \
+	-path /usr/lib/mpage -o \
+	-path /etc/X11/AnotherLevel -o \
+	-path /etc/X11/TheNextLevel -o \
+	-path /var/lib -o \
+	-path /etc/X11/wmconfig -o \
+	-path /usr/share \) -prune -o \
+	\
+	-type f -ctime -2 -print
+
+
+
+
+
+

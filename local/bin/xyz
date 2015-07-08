@@ -1,0 +1,5726 @@
+#!/usr/bin/perl
+#
+# The XYZ file manager for Linux/Unix
+#
+'(C) Copyright 2005, 2006 Robert Dowling.';
+#
+#    This program is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; either version 2 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program; if not, write to the Free Software
+#    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+#
+# The xyz home page: http://www.rtdti.com/xyz
+# Email concerning this program: xyz@rtdti.com
+#
+# Inital work: Dec 1998
+# Big Push: Mar-May 2005
+# Some Speedups: Mar 2006
+# RPM packaging: Oct 2006
+#
+### $_ = << 'eval';
+use Carp;
+use Cwd;
+use FindBin;
+use Time::Local;
+use Term::ReadKey;
+use Term::Cap;
+use Fcntl ':mode';
+
+use Time::HiRes qw(gettimeofday);
+
+##############################################################################
+# path = /usr/local/bin
+# name = bin
+# parent = /usr/local
+# sdir = /usr/local/
+
+use constant LOG_PLACEHOLDER => 'p';
+use constant LOG_TOUCHED => 't';
+
+# Reframe validity
+use constant VALID_NAUGHT => 1;
+use constant VALID_LOW_HIGH => 2;
+use constant VALID_LOW_CUR => 3;
+use constant VALID_ALL => 4;
+
+# Reframe targets
+use constant REF_LOW => -1;
+use constant REF_CEN =>  0;
+use constant REF_HIGH=>  1;
+
+# Top level call
+# Add data into %H
+# Still use -1 to indicate "fully logged", but log_subdir will change that
+# to 99.  In $H{dir}{logged}, -1 means only logged enough to show 1 child dir,
+# as in, all the intermediate directories from / to current dir.
+sub log_dir ($$)
+{
+    my ($path, $depth) = @_;
+    print FDEB "log_dir: path=$path depth=$depth\n" if $DEBUG & 1;
+    # print FDEB "defined: H{}=",0+defined $H{''}, " Line=",__LINE__,"\n";
+
+    @TO_RESOLVE = ();
+
+    $STOP_LOGGING = 0;
+    disp_message ("Press ESC to interrupt logging...");
+
+    if ($path eq $S)
+    {
+	# Just /
+	log_subdir ($S, $S, $depth);
+    }
+    else
+    {
+	my @dirs = split /$S/, $path;
+	shift @dirs; # Remove leading empty
+	pop @dirs; # Remove last dir
+	print FDEB "dirs = ", join(';',@dirs), "\n" if $DEBUG & 1;
+
+	# log_subdir ($S, $S, 1);
+	my $dir = "";
+	my $parent = $S;
+
+	# Log /
+	log_info ($S, $S, LOG_PLACEHOLDER, $S);
+
+	# Log all dirs (as placeholders) between / and target dir's parent
+	for (@dirs)
+	{
+	    $dir .= $S . $_;
+	    print FDEB "LOOP(log_dir): _=$_ dir=$dir parent=$parent\n" if $DEBUG & 1;
+	    log_info ($dir, $_, LOG_PLACEHOLDER, $parent) unless $H{$dir}{logged};
+	    $H{$parent}{dkids}{$_} = $dir;
+	    $parent = $dir;
+	}
+	$_ = $path;
+	$parent eq $S ? s/^$S// : s/^$parent$S//;
+	$H{$parent}{dkids}{$_} = $path;
+
+	# Log target dir with $depth setting
+	if ($depth)
+	{
+	    log_subdir ($path, $parent, $depth);
+	}
+	else
+	{
+	    log_info ($path, basename($path), 0, $parent);
+	    $H{$path}{familysize} = $H{$path}{size};
+	}
+    }
+    log_resolve_simlinks ();
+    disp_message ($STOP_LOGGING ? "Logging <ABORTED>" : "");
+    compute_totals ();
+    leave_chdir_safe ();
+}
+
+# Recursive call.
+# Add data into %H
+sub log_subdir ($$$)
+{
+    my ($path, $parent, $depth) = @_;
+
+    confess "log_subdir called with depth == 0.  Should be stopped by log_dir" unless $depth;
+
+    print FDEB "log_subdir: path=$path parent=$parent depth=$depth\n" if $DEBUG & 1;
+    return if $H{$path}{issymlink};
+    unless (opendir (DIR, $path))
+    {
+	print FDEB "log_subdir: error: can't opendir $path\n" if $DEBUG & 1;
+	$H{$path}{error} = 1;
+	$H{$path}{name} = basename($path);
+	$H{$path}{logged} = 0;
+	$H{$path}{parent} = $parent;
+	$H{$path}{isdir} = 1;
+	$H{$path}{size} = 0;
+	$H{$path}{familysize} = 0;
+	return;
+    }
+    my (@kids) = sort readdir (DIR);
+    closedir (DIR);
+
+    log_update_user ();
+
+    return if $STOP_LOGGING;
+
+    # Separate dir and file children
+    chdir $path;
+    my $familysize = 0;
+    my $p = $path eq $S ? $S : $path . $S;
+
+    my (@dirnames, @filenames);
+    for (@kids)
+    {
+	# Dir
+	next if /^\.\.?$/;
+	# print FDEB "statin '$p' . '$_'\n";
+	my $q = $p . $_;
+	log_info ($q, $_, 0, $path);
+	my $size = $H{$q}{stat}[7];
+	$TOTAL_BYTES+= $size;
+	if (-d _)
+	{
+	    $H{$path}{dkids}{$_} = $q;
+	    push @dirnames, $_;
+	    $TOTAL_DIRS++;
+	}
+	else
+	{
+	    # File
+	    $H{$path}{fkids}{$_} = $q;
+	    $TOTAL_FILES++;
+	    $familysize += $size;
+	}
+    }
+
+    # Now save info on current dir
+    log_info ($path, basename($path),
+	      $depth < 0 ? 99 : $depth, $parent);
+    $H{$path}{familysize} = $familysize + $H{$path}{size};
+
+    return if $depth == 1;
+    # Recurse on children
+    for (@dirnames)
+    {
+	log_subdir ($p . $_, $path, $depth-1);
+	# print FDEB "Kaching '$path' and '$p' . '$_'\n";
+	$H{$path}{familysize} += $H{$p . $_}{familysize};
+    }
+}
+
+# Path, name, logged, parent
+sub log_info ($$$$)
+{
+    my ($where, $name, $logged, $parent) = @_;
+    # print FDEB "where=$where name=$name parent=$parent\n";
+
+    @{$H{$where}{stat}} = lstat $where;
+    $H{$where}{name} = $name;
+    $H{$where}{logged} = $logged;
+    $H{$where}{parent} = $parent;
+    $H{$where}{isdir} = -d _;
+    $H{$where}{size} = -s _;
+
+    if ($H{$where}{issymlink} = -l _ && readlink $where)
+    {
+	# Sym link...
+
+	# Record if link is bad or not
+	print FDEB "log_info; error: cant opendir $path\n" if $DEBUG & 1 && !-e $where;
+	$H{$where}{error} = 1 unless -e $where;
+
+	# Find out if there is a dir there or not
+	# NOTE: Use _ from stat of '-e $where' a couple lines above
+	$H{$where}{isdir} = -d _;
+
+	# Save this one for resolution later;
+	push @TO_RESOLVE, $where;
+    }
+}
+
+# Resolve all marked simlinks
+sub log_resolve_simlinks ()
+{
+    for (@TO_RESOLVE)
+    {
+	log_resolve_simlink ($_);
+    }
+}
+
+# Resolve one simlink
+sub log_resolve_simlink ($)
+{
+    my $path = shift;
+
+    # don't do this unless needed
+    return unless $H{$path}{issymlink}; 
+
+    my $resolved = $path;
+    print FDEB "to resolve $path =>\n" if $DEBUG & 8;
+
+    # Chase down link until it resolves or we get an error
+    my %visited;
+    my $parent = $H{$path}{parent};
+    while (1)
+    {
+	# Fetch link and turn it into full path
+	$resolved = $H{$resolved}{issymlink};
+	$resolved = $parent . $S . $resolved unless $resolved =~ m:^/:;
+	$resolved = make_path_absolute ($resolved, $parent);
+
+	last unless defined $H{$resolved};
+
+	$parent = $H{$resolved}{parent};
+	print FDEB "...resolved=$resolved parent=$parent\n" if $DEBUG & 8;
+
+	print FDEB "log_resolve_simlink: error: visited{$resolved}\n" if $DEBUG & 1 && $visited{$resolved};
+	$H{$path}{error} = 1, last if $visited{$resolved}++;
+	last unless $H{$resolved}{issymlink};
+    }
+    $H{$path}{resolved} = $resolved; #  unless $H{$path}{error};
+
+    my $change_to_dir = 0;
+    if (defined $H{$resolved})
+    {
+	if ($H{$resolved}{isdir})
+	{
+	    $change_to_dir = 1;
+	}
+    }
+    else
+    {
+	# Not in logged filesystem... This might be OK
+	if ($TAR_MODE) # defined $H{$S}{istar})
+	{
+	    # We are in a tar, so this is ok
+	    # We don't know if link is to dir or file, so just assume file
+	}
+	else
+	{
+	    # We are in a live filesytem.
+	    # Try to stat the file
+	    if (-d $resolved)
+	    {
+		$change_to_dir = 1;
+	    }
+	    elsif (-e _)
+	    {
+		# File exists and is not a dir, so don't do anything
+	    }
+	    else
+	    {
+		print FDEB "log_resolve_simlink: error: $resolved not in filesystem\n" if $DEBUG & 1;
+		$H{$path}{error} = 1;
+	    }
+	}
+    }
+
+    # Do we need to chane the type of $path?
+    if ($change_to_dir)
+    {
+	# Must change from file to directory
+	$H{$path}{isdir} = 1;
+	my $name = $H{$path}{name};
+	delete $H{$H{$path}{parent}}{fkids}{$name};
+	$H{$H{$path}{parent}}{dkids}{$name} = $path;
+    }
+    print FDEB "...finished err=$H{$path}{error} isdir=$H{$path}{isdir} -> $H{$path}{resolved}\n" if $DEBUG & 8;
+}
+
+$LOG_TIME = 0;
+sub log_update_user ()
+{
+    return if $LOG_TIME == time();
+    my $key = read_whole_key_or_nothing ();
+    if ($key eq "\x1b")
+    {
+	my $quit = read_a_key (0, $SYMSG, 
+			"Quit logging [Esc or q] or continue [Enter] ", "q\x1b\r",
+			['logging directories']);
+	$STOP_LOGGING = 1 unless $quit eq "\r";
+	disp_message ($STOP_LOGGING ? "<ABORTED>" : "");
+    }
+
+    printatceol (0, $SYTOTAL, 
+	     sprintf ("Logged  Files=%s Dirs=%s Bytes=%s",
+		      format10K($TOTAL_FILES), format10K($TOTAL_DIRS), 
+		      format_size($TOTAL_BYTES)), $SX);
+    $LOG_TIME = time();
+}
+
+sub dump_log_data (;$)
+{
+    printf FDEB "<<<<<<<<<<< Start dump_log_data <<<<<<<<<<<<<<<\n";
+    my $skip_stat = shift;
+    for my $path (sort keys %H)
+    {
+	printf FDEB "'%s'\n", $path;
+	printf FDEB "   keys = %s\n", join (',',sort keys %{$H{$path}});
+	for (sort keys %{$H{$path}})
+	{
+	    if ($_ eq 'stat' && !$skip_stat)
+	    {
+		printf FDEB "   %s = (%s)\n", $_, join (',', @{$H{$path}{$_}}[0..7,9..12]);
+	    }
+	    elsif (/dkids|fkids/)
+	    {
+		printf FDEB "   %s = (%s)\n", $_,
+			     join (',', sort keys %{$H{$path}{$_}});
+	    }
+	    else
+	    {
+		printf FDEB "   %s = %s\n", $_, $H{$path}{$_};
+	    }
+	}
+    }
+    printf FDEB ">>>>>>>>>>> End dump_log_data >>>>>>>>>>>>>>>\n";
+    disp_message ("%H dumped to log file");
+}
+
+sub unlog_dir ($$)
+{
+    my ($path, $unlog_dir_itself) = @_;
+
+    confess unless $H{$path}{isdir};  # Sanity check
+
+    my $familysize = $H{$path}{familysize};
+    my $size = $H{$path}{size};
+    
+    # print FDEB "<<< Start unlog $path\n";
+    if ($path eq $S)
+    {
+	# Everything!
+	undef %H;
+	# this is wrong log_subdir ($S, $S, 0);	
+	$H{$path}{name} = $S;
+	$H{$path}{logged} = 0;
+	$H{$path}{parent} = $S;
+	$H{$path}{isdir} = 1;
+	$H{$path}{size} = 0;
+	$H{$path}{familysize} = 0;
+    }
+    else
+    {
+	# recursively unlog below here
+	unlog_subdir ($path);
+
+	# Remove family size
+	my $parent = $H{$path}{parent};
+	recompute_family_size_path ($parent, -$familysize);
+
+	if ($unlog_dir_itself)
+	{
+	    # Remove $path itself, now that it is unlogged
+
+	    my $name = $H{$path}{name};
+	    confess unless defined $H{$path};
+	    delete $H{$path};
+	    
+	    # Remove from parent's dkids
+	    confess unless defined $H{$parent}{dkids}{$name};
+	    delete $H{$parent}{dkids}{$name};
+	}
+	else
+	{
+	    # Add back in size of empty directory that did not get removed
+	    recompute_family_size_path ($parent, $size);
+	}
+    }
+
+
+    # print FDEB ">>>> End unlog $path\n";
+    compute_totals ();
+}
+
+sub unlog_subdir ($)
+{
+    my $path = shift;
+    my $p = $path eq $S ? $S : $path . $S;
+
+    # print FDEB "   Forget subdir $path\n";
+    # Forget children files
+    for (keys %{$H{$path}{fkids}})
+    {
+	delete $H{$p.$_};
+	delete $H{$path}{fkids}{$_};
+	# print FDEB "   Forget file $p$_\n";
+    }
+
+    # Recursively forget subdirs
+    for (keys %{$H{$path}{dkids}})
+    {
+	unlog_subdir ($p.$_);
+	delete $H{$p.$_};
+	delete $H{$path}{dkids}{$_};
+	# print FDEB "   Forget dir $p$_\n";
+    }
+    $H{$path}{logged} = 0;
+}
+
+sub compute_totals ()
+{
+    $TOTAL_BYTES = 0;
+    $TOTAL_FILES = 0;
+    $TOTAL_DIRS = 0;
+    # Compute Totals
+    for (keys %H)
+    {
+	$TOTAL_BYTES+= $H{$_}{size};
+	$TOTAL_FILES++, next unless $H{$_}{isdir};
+	# Dir
+	$TOTAL_DIRS++;
+    }
+}
+
+sub leave_chdir_safe ()
+{
+    # Just leave chdir somewhere not dangerous, like /tmp
+    # and somewhere sure to exist.
+    for ('/tmp', $HOME, $S)
+    {
+	if (-e $_ && -r _)
+	{
+	    chdir $_;
+	    return;
+	}
+    }
+    confess "Things are really screwed up on this filesystem";
+}
+
+##############################################################################
+
+# Recalculate familysize for a given subtree
+sub recompute_family_size ($)
+{
+    my $path = shift;
+    return unless $H{$path}{isdir};
+
+    my $familysize = $H{$path}{size};
+    my $p = $path eq $S ? $S : ($path . $S);
+    for (keys %{$H{$path}{dkids}})
+    {
+	$familysize += recompute_family_size ($p.$_);
+    }
+    for (keys %{$H{$path}{fkids}})
+    {
+	$familysize += $H{$p.$_}{size};
+    }
+    print FDEB "Setting $path familysize=$familysize p=$p\n" if $DEBUG & 1;
+    $H{$path}{familysize} = $familysize;
+    $familysize;
+}
+
+# Recalculate familysize from some node back down to root.
+sub recompute_family_size_path ($$)
+{
+    my ($path, $offset) = @_;
+    my $parent;
+
+    # Check for path already logged
+    if ($H{$path}{isdir})
+    {
+	# Yes it is alogged and a directory
+	print FDEB "Setting $path familysize += $offset\n" if $DEBUG & 1;
+	$H{$path}{familysize} += $offset;
+	$parent = $H{$path}{parent};
+    }
+    else
+    {
+	# Not logged or not a dir
+	print FEDB "recompute_family_size_path: $path += $offset not dir" 
+	    if $DBEUG & 1;
+	($parent, my $name) = dir_and_basename($path);
+    }
+    return if $path eq $S;
+
+    recompute_family_size_path ($parent, $offset);
+}
+
+sub dump_dir_stats ()
+{
+    my @D = grep { $H{$_}{isdir} } keys %H;
+    for (sort @D)
+    {
+	my $childsize = 0;
+	my $p = $_ eq $S ? $S : ($_ . $S);
+	my @f = keys %{$H{$_}{fkids}};
+	my @d = keys %{$H{$_}{dkids}};
+	for (@f, @d)
+	{
+	    $childsize += $H{$p.$_}{size};
+	}
+	printf FDEB "dirs=%3d files=%4d childsize=%10d famsize=%10d %s\n",
+		     scalar @d,
+		     scalar @f,
+		     $childsize,
+		     $H{$_}{familysize},
+		     $_;
+    }
+}
+
+##############################################################################
+
+sub log_from_tar_info ($$$$$$$$$)
+{
+    my ($path, $name, $logged, $parent, $isdir, $size, $date, $link, $resolved) = @_;
+    $H{$path}{name} = $name;
+    $H{$path}{logged} = $logged;
+    $H{$path}{parent} = $parent;
+    $H{$path}{isdir} = $isdir;
+    $H{$path}{size} = $size;
+    $H{$path}{issymlink} = $link if $link;
+    $H{$path}{resolved} = $resolved if $resolved;
+    $H{$path}{stat} = [0,0,0,0,0,0,0,0,0,$date];
+    $H{$parent}{fkids}{$name} = $path unless $path eq $S || $isdir;
+    $H{$parent}{dkids}{$name} = $path unless $path eq $S || !$isdir;
+}
+    
+sub parse_date ($)
+{
+    my $date = shift;
+    print FDEB "date=$date\n" if $DEBUG & 1;
+    my ($year, $mon, $day, $hour, $min, $sec) = $date =~ /(....)-(..)-(..)\s(..):(..):(..)/;
+    $sec=0, ($year, $mon, $day, $hour, $min) = $date =~ /(....)-(..)-(..)\s(..):(..)/ 
+	unless defined $sec;
+    confess unless defined $sec;
+    $year -= 1900;
+    $mon =~ s/^0//; $mon--;
+    $day =~ s/^0//;
+    $hour =~ s/^0//;
+    $min =~ s/^0//;
+    $sec =~ s/^0//;
+    my $time = timelocal ($sec,$min,$hour,$day,$mon,$year);
+    $time;
+}
+
+sub log_from_tar ($$)
+{
+    my $tar = shift;
+    my $log_branch = shift || $S;
+    my $basetar = basename ($tar);
+    my $cmd = sprintf ("tar -tv%s -f '%s'|", $tar =~ /gz$/i ? "z" : "", $tar);
+    open (FTAR, $cmd) || confess "Can't open '$cmd'";
+    log_from_tar_info ($S, $S, 99, $S, 1, 0, (stat($tar))[9], undef, undef)
+	if $log_branch eq $S;
+
+    $H{$S}{istar} = "($basetar)";
+    $TAR_MODE = $tar;
+
+    @TO_RESOLVE = ();
+
+
+    while (<FTAR>)
+    {
+# drwxr-xr-x a/a               0 2005-04-13 07:51:05 xtrees/
+# drwxr-xr-x a/a               0 2005-04-10 21:48:57 xtrees/old/
+# -rwxr-xr-x a/a           34684 2005-04-05 22:47:49 xtrees/old/x6-ug
+# -rwxr-xr-x a/a           21727 2005-03-27 15:47:32 xtrees/old/x5a
+# lrwxrwxrwx a/a               0 2005-05-07 14:02:28 xtrees/xyz/xyz -> x13
+	my ($dir,$perm,$user,$group,$size,$date,$relpath,$link) =
+    /^([^l])(.........)\s(\S*)\/(\S*)\s+(\d+)\s(....-..-..\s..:..:..)\s([^>\n]+)\n$/;
+	($dir,$perm,$user,$group,$size,$date,$relpath,$link) =
+    /^([^l])(.........)\s(\S*)\/(\S*)\s+(\d+)\s(....-..-..\s..:..)\s([^>\n]+)\n$/
+		unless $dir;
+	($dir,$perm,$user,$group,$size,$date,$relpath,$link) =
+    /^(l)(.........)\s(\S*)\/(\S*)\s+(\d+)\s(....-..-..\s..:..:..)\s(.+)\s->\s(.+)\n$/
+		unless $dir;
+	($dir,$perm,$user,$group,$size,$date,$relpath,$link) =
+    /^(l)(.........)\s(\S*)\/(\S*)\s+(\d+)\s(....-..-..\s..:..)\s(.+)\s->\s(.+)\n$/
+		unless $dir;
+	$relpath =~ s:/$::;
+	my $path = $relpath =~ m:^/: ? $relpath : ($S . $relpath);
+# print FDEB "_=$_\n" if $DEBUG & 1 & 1;
+# print FDEB "($dir,$perm,$user,$group,$size,$date,$relpath,$link)\n" if $DEBUG & 1 & 1;
+# print FDEB "relpath=$relpath path=$path dir=$dir\n" if $DEBUG & 1 & 1;
+
+	# Only log files under branch we are interested in. (Make it $S for all files)
+	next unless $path =~ /^$log_branch/;
+
+	my ($parent, $name) = dir_and_basename($path);
+	$parent = $S unless $parent;
+
+	push @TO_RESOLVE, $path if $link;
+
+	print FDEB "d=$dir,size=$size,date=$date,$relpath -- par=$parent n=$name l=$link\n" if $DEBUG & 1;
+	print FDEB "--- $_\n" if !$dir && ($DEBUG & 1);
+
+	# Log all dirs between / and target dir's parent, if needed
+	unless (exists $H{$parent})
+	{
+	    my @dirs = split /$S/, $parent;
+	    shift @dirs; # Remove leading empty
+	    # pop @dirs; # Remove last dir
+	    print FDEB "dirs = ", join(';',@dirs), "\n" if $DEBUG & 1;
+
+	    my $dir = "";
+	    my $parent = $S;
+
+	    for (@dirs)
+	    {
+		$dir .= $S . $_;
+		print FDEB "LOOP(log_from_tar): _=$_ dir=$dir parent=$parent\n" if $DEBUG & 1;
+		log_from_tar_info ($dir, $_, 99, $parent, 1, 0, 0, undef, undef);
+		$parent = $dir;
+	    }
+	}
+
+	log_from_tar_info ($path, $name, 99, $parent, $dir eq 'd', 0+$size,
+			   parse_date ($date), $link, undef);
+    }
+
+    log_resolve_simlinks ();
+    compute_totals ();
+    # dump_log_data (); # exit (1);
+}
+
+##############################################################################
+
+sub remove_file_from_H ($)
+{
+    my $file = shift;
+
+    # Remove from %H
+    my $name = $H{$file}{name};
+    my $parent = $H{$file}{parent};
+    my $size = $H{$file}{size};
+			
+    confess unless defined $H{$file};
+    delete $H{$file};
+    # Remove from parent's fkids
+    confess unless defined $H{$parent}{fkids}{$name};
+    delete $H{$parent}{fkids}{$name};
+
+    # recompute size
+    recompute_family_size_path ($parent, -$size);
+    compute_totals ();
+}
+
+sub add_file_to_H ($$)
+{
+    my ($name, $parent) = @_;
+    my $path = $parent . $S . $name ;
+    @TO_RESOLVE = ();
+    log_info ($path, $name, 1, $parent);
+    log_resolve_simlinks ();
+    $H{$parent}{fkids}{$name} = $path;
+
+    # Special update on logged==0
+    if ($H{$parent}{logged}==0)
+    {
+	$H{$parent}{logged}=LOG_TOUCHED;
+    }
+
+    # recompute size
+    my $size = $H{$path}{size};
+    recompute_family_size_path ($parent, $size);
+    compute_totals ();
+}
+
+##############################################################################
+
+# Return level of hierarchy that given path has.  Use tail recursion!
+sub get_level ($)
+{
+    my $path = shift;
+    return 0 if $path eq $S;
+    1 + get_level ($H{$path}{parent});
+}
+
+##############################################################################
+
+sub sub_dir_filter { 1 };
+
+# Create @G (graphical tree lines) and @GP (corresponding paths)
+# Given a path, return index into @G and @GP for it.
+sub format_dir_graph_line ($$$)
+{
+    my ($path, $indent, $name) = @_;
+
+    my $occupied; # = $H{$path}{occupied}>0 ? "o" : $H{$path}{occupied} < 0 ? "-" : " ";
+    my $logged = $H{$path}{error} ? '!' :
+	         $H{$path}{issymlink} ? '>' :
+		 $H{$path}{logged}>0 ? ' ' : '+';
+    my $dn = sprintf($DEBUG & 2 ? "%3s " : "", $H{$path}{logged}); # scalar @G);
+    my $line = $dn . $occupied . $logged;
+    my $childsize = 0;
+    if ($DG_FORMAT eq 'stats')
+    {
+	my $p = $path eq $S ? $S : ($path . $S);
+	my @f = keys %{$H{$path}{fkids}};
+	my @d = keys %{$H{$path}{dkids}};
+	for (@f, @d)
+	{
+	    $childsize += $H{$p.$_}{size};
+	}
+	$line .= sprintf " %3d:d %4d:f %10d:cb %10d:fb %s",
+		     scalar @d,
+		     scalar @f,
+		     $childsize,
+		     $H{$path}{familysize}, $path;
+
+	push @ixname, $name;
+	push @ixnamelc, lc $name;
+	push @ixpathlc, lc $path;
+	push @ixfamilybytes, $H{$path}{familysize};
+	push @ixchildbytes, $childsize;
+    }
+    elsif ($DG_FORMAT eq 'long')
+    {
+	my @stat = @{$H{$path}{stat}};
+	my $mode = $stat[2];
+	my $perm = S_IMODE($mode);
+	my $suid = $mode & S_ISUID;
+	my $link = ($mode & S_IFLNK) == S_IFLNK;
+	my $date = $stat[9];
+	my $size = $stat[7];
+	my $user_rwx  = ($mode & S_IRWXU) >> 6;
+	my $group_rwx = ($mode & S_IRWXG) >> 3;
+	my $other_rwx = ($mode & S_IRWXO);
+	my $hlinks = ($stat[3]);
+	my $uid = getpwuid ($stat[4]) || $stat[4];
+	my $gid = getgrgid ($stat[5]) || $stat[5];
+	$name = format_name ($name, $path) if $issymlink;
+	$line = sprintf ("%1s%s%s%s %3d %8s %8s %13s %16s %s", 
+			 $link ? 'l' : 'd', 
+			 oct2rwx ($user_rwx), oct2rwx ($group_rwx), oct2rwx ($other_rwx), 
+			 $hlinks, $uid, $gid,  format_size($size), format_date ($date), 
+			 $path);
+    }
+    else
+    {
+	$line .=  ($LINES ? $STR_START_ALT : "") . $indent . 
+	          ($LINES ? $STR_END_ALT : "") . $name;
+    }
+
+    # Truncate long lines with ...
+    my $width = $DG_FORMAT eq 'both' ? $SXDGD : $SXDGDg;
+    $width += length ($STR_START_ALT . $STR_END_ALT) if $LINES && $DG_FORMAT ne 'stats';
+    substr ($line, $width-3) = '...' if length ($line) > $width;
+
+    push @G, $line;
+    push @GP, $path;
+}
+
+# Set occupied flag on any dir that has file that match $FILTER
+sub compute_dir_occupied ()
+{
+    # First clear it out
+    delete $H{$_}{occupied} for (keys %H);
+    
+    # Mark / occupied
+    $H{$S}{occupied} = -1;
+
+    # Then recurse, marking only non-empty dirs given $FILTER
+    compute_subdir_occupied ($S);
+}
+
+sub compute_subdir_occupied ($)
+{
+    my $path = shift;
+
+    my $any = 0;
+#    for (keys %{$H{$path}{fkids}})
+#    {
+#	$any = $H{$path}{occupied} = 1, last if sub_file_filter ($_);
+#    }
+    # Use dir filter
+    $any = $H{$path}{occupied} = 1 if sub_dir_filter ($H{$path}{name});
+    
+    # Mark from current dir back to root
+    if ($any)
+    {
+	my $parent = $H{$path}{parent};
+	while ($parent ne $S && !$H{$parent}{occupied})
+	{
+	    $H{$parent}{occupied} = -1;
+	    $parent = $H{$parent}{parent};
+	}
+    }
+
+    # Recurse and mark kids
+    for my $newpath (values %{$H{$path}{dkids}})
+    {
+	next if $H{$newpath}{issymlink};
+	compute_subdir_occupied ($newpath);
+    }
+}
+
+# Make @G and @GP from %H
+# If you pass in a path, it will return the index of that path
+# in @GP, or 0 (which is a valid index) if it can't find it.
+sub compute_dir_graph (;$)
+{
+    $REBUG_STR .= " compDG($_[0])=" if $REBUG & 1;
+    print FDEB "compute_dir_graph ($_[0])\n" if $DEBUG & 1; 
+    compute_dir_occupied ();
+    
+    my $matchpath = shift;
+
+    @ixname = ();
+    @ixnamelc = ();
+    @ixpathlc = ();
+    @ixfamilybytes = ();
+    @ixchildbytes = ();
+    
+    # Start from scratch
+    @G = @GP = ();
+    format_dir_graph_line ($S, "", $TAR_MODE ? $H{$S}{istar} : $S);
+    compute_subdir_graph ($S, $S, "");
+
+    # Sort if in 'stats' or 'long' format
+    if ($DG_FORMAT eq 'stats' || $DG_FORMAT eq 'long')
+    {
+	my @ulut = (0..$#G);
+	@lut = sort $SORTBY_DIR (@ulut);
+	@G = map { $G[$lut[$_]]} @ulut;
+	@GP = map { $GP[$lut[$_]]} @ulut;
+    }
+
+    return 0 unless $matchpath;
+    my $i = find_dir_in_gp ($matchpath);
+    $i = 0 if $i < 0;
+    $REBUG_STR .= $i if $REBUG & 1;
+    return $i;
+}
+
+sub compute_subdir_graph ($$$$)
+{
+    my ($path, $name, $indent) = @_;
+    # print FDEB "trying path=$path\n";
+    # my @kids = sort grep { sub_dir_filter ($_) } keys %{$H{$path}{dkids}};
+
+    my @kids = sort keys %{$H{$path}{dkids}};
+    my $n = @kids;
+    for (@kids)
+    {
+	$n--;
+	# print FDEB "path=$path _=$_\n";
+	my $newpath = $H{$path}{dkids}{$_};
+	my $name = $H{$newpath}{issymlink} ? format_name ($_, $newpath) : $_;
+	# If last, use indent.add3, otherwise use indent.add2
+	format_dir_graph_line ($newpath, $indent .($n ? $add2 : $add3), $name)
+	    unless $DG_MODE eq 'occupied' && !$H{$newpath}{occupied};
+	# If last, use indent.add1, otherwise use indent.add0
+	compute_subdir_graph ($newpath, $_, $indent . ($n ? $add0 : $add1));
+    }
+}
+
+$SORTBY_DIR = \&sort_dir_by_path;
+
+sub sort_dir_by_path
+{
+     $ORDER_DIR &&  $CASE_DIR && (      $GP[$b] cmp       $GP[$a]) ||
+     $ORDER_DIR && !$CASE_DIR && ($ixpathlc[$b] cmp $ixpathlc[$a]) ||
+    !$ORDER_DIR &&  $CASE_DIR && (      $GP[$a] cmp       $GP[$b]) ||
+    !$ORDER_DIR && !$CASE_DIR && ($ixpathlc[$a] cmp $ixpathlc[$b]);
+}
+
+sub sort_dir_by_name
+{
+     $ORDER_DIR &&  $CASE_DIR && (  $ixname[$b] cmp   $ixname[$a] || $GP[$b] cmp $GP[$a]) ||
+     $ORDER_DIR && !$CASE_DIR && ($ixnamelc[$b] cmp $ixnamelc[$a] || $ixpathlc[$b] cmp $ixpathlc[$a]) ||
+    !$ORDER_DIR &&  $CASE_DIR && (  $ixname[$a] cmp   $ixname[$b] || $GP[$a] cmp $GP[$b]) ||
+    !$ORDER_DIR && !$CASE_DIR && ($ixnamelc[$a] cmp $ixnamelc[$b] || $ixpathlc[$a] cmp $ixpathlc[$b]);
+}
+
+sub sort_dir_by_family_bytes
+{
+     $ORDER_DIR && ($ixfamilybytes[$b] <=> $ixfamilybytes[$a] || $GP[$b] cmp $GP[$a]) ||
+    !$ORDER_DIR && ($ixfamilybytes[$a] <=> $ixfamilybytes[$b] || $GP[$a] cmp $GP[$b]);
+}
+
+sub sort_dir_by_child_bytes
+{
+     $ORDER_DIR && ($ixchildbytes[$b] <=> $ixchildbytes[$a] || $GP[$b] cmp $GP[$a]) ||
+    !$ORDER_DIR && ($ixchildbytes[$a] <=> $ixchildbytes[$b] || $GP[$a] cmp $GP[$b]);
+}
+
+##############################################################################
+
+$FILTER_GLOB = "*";
+$FILTER = compute_filter_from_glob ($FILTER_GLOB);
+
+sub oct2rwx ($)
+{
+    my $o = shift;
+    sprintf ("%s%s%s", $o & 4 ? "r" : "-",  $o & 2 ? "w" : "-", $o & 1 ? "x" : "-");
+}
+
+# Formats line like this:
+#  symlink file:   T link-target <-! name
+#  regular file:   T date longsize ! name
+sub do_format_file_line ($$$$$$$@)
+{
+    my ($path, $name, $size, $issymlink, $error, $tag, $in_prompt, @stat) = @_;
+
+    my $line = sprintf ("%1s%1s", $tag && 'T', $error && '!');
+    if ($FL_FORMAT eq 'name')
+    {
+	$name = format_name ($name, $path) if $issymlink;
+	$line .= sprintf ("%s", $name);
+    }
+    elsif ($FL_FORMAT eq 'long')
+    {
+	my $mode = $stat[2];
+	my $perm = S_IMODE($mode);
+	my $suid = $mode & S_ISUID;
+	my $link = ($mode & S_IFLNK) == S_IFLNK;
+	my $date = $stat[9];
+	my $user_rwx  = ($mode & S_IRWXU) >> 6;
+	my $group_rwx = ($mode & S_IRWXG) >> 3;
+	my $other_rwx = ($mode & S_IRWXO);
+	my $hlinks = ($stat[3]);
+	my $uid = getpwuid ($stat[4]) || $stat[4];
+	my $gid = getgrgid ($stat[5]) || $stat[5];
+	$name = format_name ($name, $path) if $issymlink;
+	$line .= sprintf ("%1s%s%s%s %3d %8s %8s %13s %16s %s", 
+			 $link ? 'l' : '-', 
+			 oct2rwx ($user_rwx), oct2rwx ($group_rwx), oct2rwx ($other_rwx), 
+			 $hlinks, $uid, $gid,  format_size($size), format_date ($date), 
+			 $name);
+    }
+    elsif ($FL_FORMAT eq 'date' || $FL_FORMAT eq 'datepath')
+    {
+	my $n = $FL_FORMAT eq 'date' ? $name : 
+	    $issymlink ? format_name ($path, $path) : $path;
+
+	if ($issymlink)
+	{
+	    $line .= sprintf ("%-27s <- %s", $issymlink, $n);
+	}
+	else
+	{
+	    my $date = $stat[9];
+	    $line .= sprintf ("%16s %13s %s", 
+		     format_date ($date), format_size($size), $n);
+	}
+    }
+    else # path
+    {
+	$line .= sprintf ("%s", $issymlink ? format_name ($path, $path) : $path);
+    }
+    # Truncate long lines with ...
+    # Subtract 1 more from SXLVLD to make a 1 char space betwen window panes
+    my $width = $in_prompt ? $SX :
+		$MODE eq 'LV' ? $SXLVLD-1 :
+                $MODE eq 'DG' ? $SXDFD : $SXFVD;
+# print FDEB "mode=$mode $SXLVLD $SXDFD : $SXFVD line=$line len=",length($line)," width=$width\n";
+    substr ($line, $width-3) = "..." if length ($line) > $width;
+    $line;
+}
+
+# It is possible that $path has not been logged (called by ok_to_overwrite)
+# so we need to fake up an entry in that case.
+# Optional parameter is nonzero if we are being used in a prompt
+sub format_file_line ($;$)
+{
+    my ($path, $in_prompt) = @_;
+
+    if (exists $H{$path})
+    {
+	my $h = $H{$path};
+	do_format_file_line ($path, $h->{name}, $h->{size}, $h->{issymlink}, 
+			     $h->{error}, $h->{tag}, $in_prompt, @{$h->{stat}});
+    }
+    else
+    {
+	lstat $path;
+	do_format_file_line ($path, basename ($path), -s _,
+			     -l _ && readlink $path, !-e _, undef, $in_prompt, lstat _);
+    }
+}
+
+sub elapsed ($)
+{
+    my ($time, $usec) = gettimeofday ();
+    $time += $usec / 1e6;
+    my $sec = $time - $TIME_START;
+    $TIME_START = $time if shift;
+    $sec;
+}
+
+sub sub_file_filter { 1 };
+
+sub compute_file_list ($)
+{
+    elapsed (1);
+
+    $REBUG_STR .= " compFL($_[0])" if $REBUG & 1;
+# my ($p, $f, $l) = caller;
+# print FDEB "compute_file_list ($_[0]) f=$f l=$l\n" if $DEBUG & 1; 
+    print FDEB "compute_file_list ($_[0])\n" if $DEBUG & 1; 
+
+    $FL_BYTES = 0;
+    $FL_FILES = 0;
+    $FL_DIRS = 0;
+    my %ix;
+    keys %ix = keys %H;
+    # %ixname = ();
+    # %ixnamelc = ();
+    # %ixsize = ();
+    # %ixdate = ();
+    my $current = shift;
+    my $i = 0;
+    if ($FL_MODE eq 'showall')
+    {
+	my $ext, $name;
+	for (keys %H)
+	{
+	    $FL_DIRS++, next if $H{$_}{isdir};
+	    next unless sub_file_filter ($H{$_}{name});
+	    next if $TAG_MODE eq 'tag' && !$H{$_}{tag};
+	    $FL_FILES++;
+	    $FL_BYTES+= $H{$_}{size};
+	    $ix{$SORTBY->($_, $i++)} = $_;
+	}
+    }
+    elsif ($FL_MODE eq 'current')
+    {
+	local $_;
+	# print FDEB "current=$current\n";
+	$FL_DIRS = scalar keys %{$H{$current}{dkids}};
+	for my $f (keys %{$H{$current}{fkids}})
+	{
+	    next unless sub_file_filter ($f);
+	    next if $TAG_MODE eq 'tag' && !$H{$f}{tag};
+	    $_ = $current eq $S ? $S . $f : $current . $S . $f;
+ 	    $FL_FILES++;
+ 	    $FL_BYTES+= $H{$_}{size};
+	    $ix{$SORTBY->($_, $i++)} = $_;
+	}
+    }
+    elsif ($FL_MODE eq 'branch')
+    {
+	for (keys %H)
+	{
+	    # print FDEB "$H{$_}{parent} =~ /^$current/?$/\n" if $DEBUG & 1;
+	    next unless $H{$_}{parent} =~ /^$current(\/|$)/;
+	    next unless sub_file_filter ($H{$_}{name});
+	    next if $TAG_MODE eq 'tag' && !$H{$_}{tag};
+	    $FL_DIRS++, next if $H{$_}{isdir};
+	    $FL_FILES++;
+	    $FL_BYTES+= $H{$_}{size};
+	    $ix{$SORTBY->($_, $i++)} = $_;
+	  }
+    }
+    else
+    {
+	confess;
+    }
+
+    push @TT, sprintf ("First half=%f\n", elapsed (1)) if $PROFILE;
+
+    # Sort and place in @F, @FP
+    # @F has formatted lines, @FP has unique path names
+    # (Don't compute @F now,  do it when needed with $F[x] ||= format(@FP[x])
+    @FP = @ix{sort keys %ix};
+    @FP = reverse @FP if $ORDER;
+    @F = ();
+    push @TT, sprintf ("Second half=%f\n", elapsed (1)) if $PROFILE;
+}
+
+$SORTBY = \&sort_by_ext;
+
+sub sort_by_name ($$)
+{
+    my ($f, $i) = @_;
+    # For sort-by-ext
+    my $ix = $H{$f}{name} . pack ('xN', $i);
+    $ix = lc $ix if !$CASE;
+    $ix;
+}
+
+sub sort_by_ext ($$)
+{
+    my ($f, $i) = @_;
+    my ($name, $ext) = split /\./, $H{$f}{name}, 2;
+    my $ix = pack ('A*xA*xN', $ext, $name, $i);
+    $ix = lc $ix if !$CASE;
+    $ix;
+}
+
+sub sort_by_date ($$)
+{
+    my ($f, $i) = @_;
+    my $ix = pack ("NxA*xN", $H{$_}{stat}[9], $H{$f}{name}, $i);
+    $ix = lc $ix if !$CASE;
+    $ix;
+}
+
+sub sort_by_size ($$)
+{
+    my ($f, $i) = @_;
+    my $ix = pack ("NxA*xN", $H{$_}{size}, $H{$f}{name}, $i);
+    $ix = lc $ix if !$CASE;
+    $ix;
+}
+
+# Return index or -1 for failure
+sub find_file_in_fp ($)
+{
+    my $matchpath = shift;
+    my $i = 0;
+    for (@FP)
+    {
+	return $i if $_ eq $matchpath;
+	$i++;
+    }
+    return -1;
+}
+
+# Return index or -1 for failure
+sub find_dir_in_gp ($)
+{
+    my $matchpath = shift;
+    my $i = 0;
+    for (@GP)
+    {
+	return $i if $_ eq $matchpath;
+	$i++;
+    }
+    return -1;
+}
+
+##############################################################################
+
+# Made this interruptable sep 17, 2005
+$CFV_RUNNING = 0;
+sub compute_file_view ($)
+{
+    # Avoid running again if we were already running and got
+    # interrupted to show help.
+    return if $CFV_RUNNING;
+
+    my $file = shift;
+    @V = ();
+    $FVCUR = 0;
+    $FVLOW = 0;
+    if (-e $file)
+    {
+	if (-r $file)
+	{
+	    if ($FV_MODE eq 'binary')
+	    {
+		compute_file_view_hex_dump ($file, $SY);
+	    }
+	    else
+	    {
+		compute_file_view_ascii ($file, $SY);
+	    }
+	}
+	else
+	{
+	    compute_file_view_fail ("<<< Can't open '$file' for reading >>>");
+	}
+    }
+    else
+    {
+	compute_file_view_fail ("<<< No such file as '$file' >>>");
+    }
+
+}
+
+# Made this interruptable sep 17, 2005
+sub compute_file_view_ascii ($$)
+{
+    # Ascii or help file
+    my ($file, $want_lines) = @_;
+    my $s = 0;
+    my $S = -s $file;
+    if (open (my $FIN, "expand '$file' 2>&1 |"))
+    {
+	$CFV_RUNNING = 1; # Avoid recursion	
+	while (<$FIN>)
+	{
+	    $s += length;
+	    chomp;
+	    s/\r//;
+	    push @V, $_;
+	    unless ($. & 255)
+	    {
+		if (compute_file_view_update_user($s, $S, $file))
+		{
+		    disp_message (sprintf 
+				  "<ABORTED READ OF FILE AT LINE %d, (%d DONE)>",
+				  $., 100*$s/$S);
+		    # GIVE UP
+		    $CFV_RUNNING = 0;
+		    close $FIN;
+		    return;
+		}
+		FVreframe (VALID_NAUGHT, REF_LOW) if $. >= $SY && $. < $SY+256;
+	    }
+	}
+	disp_message ("");
+	$CFV_RUNNING = 0;
+	close $FIN;
+    }
+    else
+    {
+	compute_file_view_fail ("<<< Trouble opening '$file' with 'expand' >>>");
+    }
+}
+
+# Made this interruptable sep 17, 2005
+sub compute_file_view_hex_dump ($$)
+{
+   # hex dump
+    my ($file, $want_lines) = @_;
+    if (open (my $FIN, "$file"))
+    {
+	$CFV_RUNNING = 1; # Avoid recursion	
+	my $addr = 0;
+	my $buf;
+	my $CHUNK = 16;
+	my $line;
+	my $S = -s $file;
+	my $SYCMP = $SY * 16;
+	while (1)
+	{
+	    
+	    my $len = sysread ($FIN, $buf, $CHUNK);
+	    $line = sprintf ("%06x:", $addr);
+	    my @line = split //, $buf;
+	    for (@line)
+	    {
+		$line .= sprintf " %02x", ord $_;
+		$_ = '.' unless $_ ge ' ' && $_ le '~';
+	    }
+	    $line .= "   " for (scalar @line..16);
+	    $line .= "  ".join('',@line);
+	    push @V, $line;
+	    last if $len < $CHUNK;
+	    $addr += $CHUNK;
+	    unless ($addr & 0xff)
+	    {
+		if (compute_file_view_update_user($addr, $S, $file))
+		{
+		    disp_message (sprintf "<ABORTED READ AT ADDR 0x%08x (%d%% DONE)>", $addr, 100*$addr/$S);
+		    # GIVE UP
+		    return;
+		}
+		FVreframe (VALID_NAUGHT, REF_LOW) if $addr >= $SYCMP && $addr < $SYCMP+256;
+	    }
+	}
+	disp_message ("");
+	$CFV_RUNNING = 0;
+	close $FIN;
+    }
+    else
+    {
+	compute_file_view_fail ("<<< Trouble opening '$file' >>>");
+    }
+}
+
+sub compute_file_view_fail ($)
+{
+    my $msg = shift;
+    my $line = '*' x $SX;
+    push @V, $line for (1..10);
+    $msg = " $msg ";
+    if (length $msg < length $line)
+    {
+	my $line1 = $line;
+	substr ($line1, (length ($line1) - length ($msg))/2, length ($msg)) =
+	    $msg;
+	push @V, $line1;
+    }
+    else
+    {
+	push @V, $msg;
+    }
+    push @V, $line for (1..10);
+}
+	
+sub deduce_file_view_mode ($)
+{
+    my $file = shift;
+    
+    my $mode = -T $file ? 'ascii' : 'binary';
+    $mode = 'binary' if $file =~ /\.pdf$/;
+    $mode;
+}
+
+$CFV_TIME = 0;
+# Call more than once a second.
+# Return (key) non-zero if user hit a key and confirmed it
+# Return 0 otherwise.
+# Update screen 1/second with % done
+sub compute_file_view_update_user ($$$)
+{
+    my ($a, $A, $file) = @_;
+    return 0 if $CFV_TIME == time();
+    my $key = read_whole_key_or_nothing ();
+    if (defined $key)
+    {
+	# Quick return if n or p hit in LV mode
+	return $key if $key =~ /[npNP]/ && $MODE eq "LV"; 
+
+	my $quit = read_a_key (0, $SYMSG, 
+			sprintf ("Quit reading %s (%d%% done) [Esc or q] or [Enter] to continue ", 
+				 $file, 100*$a/$A), "q\x1b\r",
+			['file view display']);
+	return $key unless ($quit eq "\r");
+	disp_message ("");
+    }
+    $CFV_TIME = time();
+    disp_message (sprintf "Reading %s (%d%% done)...", $file, 100*$a/$A);
+    return 0;
+}
+
+##############################################################################
+
+sub compute_filter_from_glob ($)
+{
+    my $glob = shift;
+
+    *sub_file_filter = sub { 1 }, return unless $glob;
+
+    my $filter = "";
+    for (split /,/, $glob)
+    {
+	$mod = s/^-// ? "!" : "";
+	$conj = $mod ? "&&" : "||";
+
+	# Change filter into RE
+	s/\./\\./g;
+	s/\*/.*/g;
+	s/\?/./g;
+	
+	my $filt = sprintf ('%s/^%s$/', $mod, $_);
+	$filter = $filter ? ( "(".$filter.")". $conj . $filt) : $filt;
+    }
+    *sub_file_filter = eval ('sub { (local $_) = @_; ' . $filter . ' }');
+    $filter;
+}
+
+##############################################################################
+
+$SIZE_MODE = 'int';
+
+sub commify ($)
+{
+    local $_  = shift;
+    1 while s/^([-+]?\d+)(\d{3})/$1,$2/;
+    return $_;
+}
+
+sub len_format_size ()
+{
+    return $SIZE_MODE eq 'int' ? 13 : 6;
+}
+
+sub format_size ($)
+{
+    my $size = shift;
+    return sprintf ("%13s", commify ($size)) if $SIZE_MODE eq 'int';
+    $size =
+	$size >= 1e9 ? sprintf ("%5.2fG", $size/1e9) :
+	$size >= 1e8 ? sprintf ("%5.1fM", $size/1e6) :
+	$size >= 1e7 ? sprintf ("%5.2fM", $size/1e6) :
+	$size >= 1e6 ? sprintf ("%5.3fM", $size/1e6) :
+	$size >= 1e5 ? sprintf ("%5.1fK", $size/1e3) :
+	$size >= 1e4 ? sprintf ("%5.2fK", $size/1e3) :
+	               sprintf ("%5d ",   $size);
+}    
+
+sub format10K ($)
+{
+    my $size = shift;
+    return sprintf ("%6s", commify ($size)) if $SIZE_MODE eq 'int';
+    $size =
+	$size >= 1e9 ? sprintf ("%5.2fG", $size/1e9) :
+	$size >= 1e8 ? sprintf ("%5.1fM", $size/1e6) :
+	$size >= 1e7 ? sprintf ("%5.2fM", $size/1e6) :
+	$size >= 1e6 ? sprintf ("%5.3fM", $size/1e6) :
+	$size >= 1e5 ? sprintf ("%5.1fK", $size/1e3) :
+	$size >= 1e4 ? sprintf ("%5.2fK", $size/1e3) :
+	               sprintf ("%5d ",   $size);
+}    
+
+sub flush_left ($)
+{
+    local $_ = shift;
+    s/^(\s*)(.*)$/\2\1/;
+    $_;
+}
+
+sub format_date ($)
+{
+    # Len = 16
+    my $time = shift;
+    my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime($time);
+	sprintf ("%04d-%02d-%02d %02d:%02d", $year+1900, $mon+1, $mday, 
+		 $hour, $min);
+}
+
+sub format_name ($$)
+{
+    my ($name, $path) = @_;
+    $LINK_FORMAT eq 'follow' ?   "$name" :
+    $LINK_FORMAT eq 'resolved' ? "$name -> $H{$path}{resolved}" :
+    				 "$name -> $H{$path}{issymlink}";
+}
+
+sub grab_upto_newline ($)
+{
+    my $line = shift;
+    my ($out) = $line =~ /^(.*)/;
+    $out;
+}
+
+##############################################################################
+
+$TERM = undef;
+
+# Extract from Term::Cap the funny keys.  
+# Given a termcap entry, return key
+sub TermCapKeyIs ($)
+{
+    our $TCKI = Tgetent Term::Cap { TERM => $TERM } unless defined $TCKI;
+    my $key = shift;
+    my ($str) = $TCKI->{TERMCAP} =~ /:$key=([^:]+):/;
+    $str =~ s/\\E/\x1b/g; # esc
+    $str =~ s/\^([A-Za-z])/chr(ord($1)&0x1f)/ge; # ^x
+    $str =~ s/\\(\d\d\d)/chr(oct($1))/ge; # \nnn
+print FDEB "tcki '$key' = '$str'\n" if $DEBUG & 1;
+    $str;
+}
+
+sub set_termcap_strings ()
+{
+    our $TCKI = Tgetent Term::Cap { TERM => $TERM } unless defined $TCKI;
+    confess unless defined $TCKI;
+print FDEB "termcap='$TCKI->{TERMCAP}'\n" if $DEBUG & 1;
+    $STR_INVERSE = $TCKI->Tputs("mr", 0);
+    $STR_BOLD = $TCKI->Tputs("md", 0);
+    $STR_PLAIN = $TCKI->Tputs("me", 0);
+    $STR_CEOL = $TCKI->Tputs("ce", 0);
+    $STR_CLS = $TCKI->Tputs("cl", 0);
+    $STR_START_ALT = "\cn"; # $TCKI->Tputs("as", 0);
+    $STR_END_ALT = "\co"; # $TCKI->Tputs("ae", 0);
+}
+
+# Extract from `tput` the funny keys.  
+# Given a termcap entry, return key
+sub TermInfoKeyIs ($)
+{
+    my $key = shift;
+    my $str = `tput $key`;
+print FDEB "terminfo key '$key' = '$str'\n" if $DEBUG & 1;
+    $str;
+}
+
+sub do_get_terminfo_string ($)
+{
+    my $tag = shift;
+    my $str = `tput $tag`;
+print FDEB "terminfo str '$tag' = '$str'\n" if $DEBUG & 1;
+    $str;
+}
+
+sub set_terminfo_strings ()
+{
+    $STR_INVERSE = do_get_terminfo_string ("rev");
+    $STR_BOLD = do_get_terminfo_string ("bold");
+    $STR_PLAIN = do_get_terminfo_string ("sgr0");
+    $STR_CEOL = do_get_terminfo_string ("el");
+    $STR_CLS = do_get_terminfo_string ("clear");
+    $STR_START_ALT = do_get_terminfo_string ("smacs");
+    $STR_END_ALT = do_get_terminfo_string ("rmacs");
+
+    # Get translation table
+    if ($LINES)
+    {
+	$STR_ACSC = do_get_terminfo_string ("acsc");
+	$STR_FROM = $STR_TO = "";
+	for (my $i=0; $i<length $STR_ACSC; $i+=2)
+	{
+	    next unless substr ($STR_ACSC, $i, 1) =~ /[xtqm]/;
+	    $STR_FROM .= substr ($STR_ACSC, $i, 1);
+	    $STR_TO   .= substr ($STR_ACSC, $i+1, 1);
+	}
+	
+	# Turn the VT100 special symbol strings into ones our terminal can use
+	eval "\$add0 =~ tr/$STR_FROM/$STR_TO/;";
+	eval "\$add1 =~ tr/$STR_FROM/$STR_TO/;";
+	eval "\$add2 =~ tr/$STR_FROM/$STR_TO/;";
+	eval "\$add3 =~ tr/$STR_FROM/$STR_TO/;";
+# print FDEB "acsc='$STR_ACSC' fr='$STR_FROM' to='$STR_TO' add0='$add0'\n" if $DEBUG & 1;
+    }
+}
+
+##############################################################################
+
+sub cls ()
+{
+    # print "\x1b[2J";
+    print $STR_CLS;
+}
+
+sub cursor ($$)
+{
+    my ($x, $y) = @_;
+    print "\x1b[",$y+1,";",$x+1,"H";
+    # print $TCKI->Tgoto('cm', $x, $y);
+}
+
+# Low level print
+sub printat ($$;$)
+{
+    my ($x, $y, $str) = @_;
+    $str = $DISP_CACHE{"$x,$y"} if @_ < 3;
+    $DISP_CACHE{"$x,$y"} = $str unless @_ < 3 || $y < $SYFIRST;
+    cursor ($x, $y);
+    print $str;
+}
+
+# Print normal, but padded to eol
+sub printatceol ($$$$)
+{
+    my ($x, $y, $str, $clen) = @_;
+    $clen-- if $y == $SY-1;
+    my $len = length $str;
+    printat ($x, $y, $len > $clen ? 
+	     substr ($str, 0, $clen) : 
+	     $str . (' 'x($clen-$len)));
+}
+
+# Print inverted padded to eol
+sub iprintatceol ($$$$)
+{
+    my ($x, $y, $str, $clen) = @_;
+    $clen-- if $y == $SY-1;
+    my $len = length $str;
+    my $before = $STR_INVERSE;
+    my $after  = $STR_PLAIN;
+    printat ($x, $y, $len > $clen ? 
+	     $before . substr ($str, 0, $clen) . $after: 
+	     $before . $str . (' 'x($clen-$len)) . $after);
+}
+
+# print in "hint" mode: expand [x] to x inverted or bold or whatever
+sub hintatceol ($$$$)
+{
+    my ($x, $y, $str, $clen) = @_;
+    $clen-- if $y == $SY-1;
+    my $len = length $str;
+    if ($CONFIG_HINT_KEYS_BOLD)
+    {
+	$str = expand_highlight ($str, $clen, $STR_BOLD, $STR_PLAIN . $STR_INVERSE);
+    }
+    my $before = $STR_INVERSE;
+    my $after  = $STR_PLAIN;
+    printat ($x, $y, $before . $str . $after);
+}    
+
+sub disp_message ($)
+{
+    printatceol (0, $SYMSG, shift, $SX);
+# print FDEB "disp_message '$s'\n";
+}
+
+sub expand_highlight ($$$$)
+{
+    my ($in, $MAXLEN, $STR_HIGH_ON, $STR_HIGH_OFF) = @_;
+    my $state = 0;
+    my $out = "";
+    my $len = 0;
+    for (split /([\[\]])/, $in)
+    {
+	$state = 1, $out .= $STR_HIGH_ON,  next if $_ eq '[';
+	$state = 0, $out .= $STR_HIGH_OFF, next if $_ eq ']';
+	my $newlen = $len + length;
+	$out .= substr ($_, 0, $MAXLEN-$len), $len=$MAXLEN, last
+	    if $MAXLEN <= $newlen;
+	$out .= $_;
+	$len = $newlen;
+    }
+    $out .= $STR_HIGH_OFF if $state;
+    $out .= ' 'x($MAXLEN-$len);
+    $out;
+}
+
+##############################################################################
+
+# Reframing Scenarios
+# 
+#     1 boot, log, change filter, change sort, s, c, b
+# 	@F changes
+# 	cur changed
+# 	low, high invalid
+# 	    reframe low/high around cur (target varies)
+# 	    redraw
+#     2 ^, v, pg^, pgv, <
+# 	@F same
+# 	low, high same
+# 	cur changed
+# 	    unless low<=cur<=high 
+# 		reframe low/high around cur (target varies)
+# 		redraw
+#     3 delete, -, +, *
+# 	@F changed
+# 	high invalid
+# 	low same
+# 	cur same ==> low <= cur
+# 	    compute high from low
+# 	    redraw
+#     4 FMODE change
+# 	@F same
+# 	cur, low, high all same
+# 	    redraw
+# 	
+# 4 modes:
+#  1 valid_naught 	cold: all changed	reframe, redraw
+#  2 valid_low_high 	same @f, cur changed	possibly reframe & redraw
+#  3 valid_low_cur	same cur, @f changed	compute high, redraw
+#  4 valid_all		nothign changed		redraw
+#
+# ******************************************************************************
+
+sub reframe ($$) # (validity, screen_target_for_cursor)
+{
+    $REBUG_STR .= " reframe(".join(',',@_).")" if $REBUG & 1;
+    if ($MODE eq 'LV')
+    {
+	&FLreframe;
+	&FVreframe;
+    }
+    elsif ($MODE eq 'FV')
+    {
+	&FVreframe;
+    }
+    elsif ($MODE eq 'FL')
+    {
+	&FLreframe;
+    }
+    else
+    {
+	&DGreframe;
+    }
+}
+
+sub reframe0 ()
+{
+    reframe (VALID_NAUGHT, REF_CEN);
+}
+
+##############################################################################
+
+# DirGraph
+
+# Indices into @G: current, lowest visible, highest visible
+$DGCUR = 0;
+$DGLOW = 0;
+$DGHIGH = 0;
+
+# Move CUR if it is not 0 <= CUR <= $#G
+sub DGreboundCUR ()
+{
+    $DGCUR = 0 if $DGCUR < 0;
+    $DGCUR = $#G if $DGCUR > $#G;
+}
+
+# Assume CUR is good (well, don't assume perfect!  Do reboundCUR)
+# Center CUR on screen; set LOW and HIGH
+sub DGreframe ($$)
+{
+    my ($validity, $target) = @_;
+    $REBUG_STR .= " DGref(".join(',',@_).")" if $REBUG & 1;
+
+    if ($validity == VALID_NAUGHT)
+    {
+	# Make sure CUR is valid, in case array shrunk
+	DGreboundCUR ();
+
+	# Compute LOW & HIGH
+comp_lo_hi:
+	if ($target == REF_HIGH)
+	{
+	    $DGHIGH = $DGCUR;
+	    $DGHIGH = $#G if $DGHIGH > $#G;
+	    $DGLOW = $DGHIGH - ($SYDGD-1);
+	    $DGLOW = 0 if $DGLOW < 0;
+	}
+	else
+	{
+	    $DGLOW = $target == REF_LOW ? $DGCUR :
+		$DGCUR - int ($SYDGD / 2);
+	    $DGLOW = 0 if $DGLOW < 0;
+	    $DGHIGH = $DGLOW + $SYDGD-1;
+	    $DGHIGH = $#G if $DGHIGH > $#G;
+	}
+	# Redraw
+	DGredraw ();
+	# Now draw file list on right
+	compute_file_list ($GP[$DGCUR]);
+	DGredraw_file_list () if $DG_FORMAT eq 'both';
+    }
+    elsif ($validity == VALID_LOW_HIGH)
+    {
+	# Make sure CUR is valid, in case array shrunk
+	DGreboundCUR ();
+
+	goto comp_lo_hi unless ($DGLOW <= $DGCUR && $DGCUR <= $DGHIGH);
+	# If not, make sure to redraw file list on right
+	compute_file_list ($GP[$DGCUR]);
+	DGredraw_file_list () if $DG_FORMAT eq 'both';
+    }
+    elsif ($validity == VALID_LOW_CUR)
+    {
+	# Sanity: Cur >= LOW, otherwise kick it back to comp_lo_hi
+	goto comp_lo_hi unless $DGLOW <= $DGCUR;
+
+	# Compute HIGH
+	$DGHIGH = $DGLOW + $SYDGD-1;
+	$DGHIGH = $#G if $DGHIGH > $#G;
+
+	# Redraw
+	DGredraw ();
+	# Now draw file list on right
+	DGredraw_file_list () if $DG_FORMAT eq 'both';
+    }
+    elsif ($validity == VALID_ALL)
+    {
+	# Redraw
+	DGredraw ();
+	# Now draw file list on right
+	compute_file_list ($GP[$DGCUR]);
+	DGredraw_file_list () if $DG_FORMAT eq 'both';
+    }
+    else
+    {
+	confess;
+    }
+    $REBUG_STR .= ":{$DGLOW,$DGCUR,$DGHIGH}" if $REBUG & 1;
+}
+
+# Just draw without clearing screen
+sub DGredraw ()
+{
+    $REBUG_STR .= " DGred" if $REBUG & 1;
+    my $width = $DG_FORMAT eq 'both' ? $SXDGD : $SXDGDg;
+    $width += length ($STR_START_ALT . $STR_END_ALT) if $LINES && $DG_FORMAT ne 'stats';
+# print FDEB "DGredraw: width=$width low=$DGLOW hi=$DGHIGH g[0]=$G[0] sxdg0=$SXDG0 $SYDG0\n";
+
+    # Draw Dir Graph
+    my $i = 0;
+    for ($DGLOW..$DGHIGH)
+    {
+	printatceol ($SXDG0, $SYDG0+$i++, $G[$_], $width);
+    }
+    for ($i..$SYDG1)
+    {
+	printatceol ($SXDG0, $SYDG0+$_, "", $width);
+    }
+}
+
+sub DGredraw_file_list ()
+{
+    $REBUG_STR .= " DGredFL" if $REBUG & 1;
+
+    for ($SYDF0..$SYDF1)
+    {
+	$i = $_ - $SYDF0;
+	printatceol ($SXDF0, $_, $i < @FP ? 
+		     $F[$i] ||= format_file_line($FP[$i]) : "", $SXDFD);
+    }
+}
+
+##############################################################################
+
+# Indices into @F: current, lowest visible, highest visible
+$FLCUR = 0;
+$FLLOW = 0;
+$FLHIGH = 0;
+
+# Move CUR if it is not 0 <= CUR <= $#FP
+sub FLreboundCUR ()
+{
+    $FLCUR = 0 if $FLCUR < 0;
+    $FLCUR = $#FP if $FLCUR > $#FP;
+}
+
+sub FLreframe ($$) # (validity, screen_target_for_cursor)
+{
+    my ($validity, $target) = @_;
+    $REBUG_STR .= " FLref(".join(',',@_).")" if $REBUG & 1;
+    my $syd = $MODE eq 'LV' ? $SYLVLD : $SYFLD;
+
+    if ($validity == VALID_NAUGHT)
+    {
+	# Make sure CUR is valid, in case array shrunk
+	FLreboundCUR ();
+
+	# Compute LOW & HIGH
+comp_lo_hi:
+	if ($target == REF_HIGH)
+	{
+	    $FLHIGH = $FLCUR;
+	    $FLHIGH = $#FP if $FLHIGH > $#FP;
+	    $FLLOW = $FLHIGH - ($syd-1);
+	    $FLLOW = 0 if $FLLOW < 0;
+	}
+	else
+	{
+	    $FLLOW = $target == REF_LOW ? $FLCUR :
+		$FLCUR - int ($syd / 2);
+	    $FLLOW = 0 if $FLLOW < 0;
+	    $FLHIGH = $FLLOW + $syd-1;
+	    $FLHIGH = $#FP if $FLHIGH > $#FP;
+	}
+	# Redraw
+	FLredraw ();
+    }
+    elsif ($validity == VALID_LOW_HIGH)
+    {
+	# Make sure CUR is valid, in case array shrunk
+	FLreboundCUR ();
+
+	goto comp_lo_hi unless ($FLLOW <= $FLCUR && $FLCUR <= $FLHIGH);
+    }
+    elsif ($validity == VALID_LOW_CUR)
+    {
+	# Sanity: Cur >= LOW, otherwise kick it back to comp_lo_hi
+	goto comp_lo_hi unless $FLLOW <= $FLCUR;
+	
+	# Compute HIGH
+	$FLHIGH = $FLLOW + $syd-1;
+	$FLHIGH = $#FP if $FLHIGH > $#FP;
+
+	# Redraw
+	FLredraw ();
+    }
+    elsif ($validity == VALID_ALL)
+    {
+	# Redraw
+	FLredraw ();
+    }
+    else
+    {
+	confess;
+    }
+    $REBUG_STR .= ":{$FLLOW,$FLCUR,$FLHIGH}" if $REBUG & 1;
+}
+
+# Just draw without clearing screen
+sub FLredraw ()
+{
+    $REBUG_STR .= " FLred" if $REBUG & 1;
+    my ($x,$y,$d) = $MODE eq 'LV' ? ($SXLVL0, $SYLVL0, $SXLVLD) : ($SXFV0, $SYFV0, $SXFVD);
+    my $sy1 = $MODE eq 'LV' ? $SYLVL1 : $SYFL1;
+# print FDEB "FLredraw: width=$d low=$FLLOW hi=$FLHIGH f[0]=$F[0]\n";
+    my $i = 0;
+    if (@FP)
+    {
+	for ($FLLOW..$FLHIGH)
+	{
+	    $F[$_] ||= format_file_line($FP[$_]);
+	    printatceol ($x, $y+$i++, $F[$_], $d);
+	}
+    }
+    for ($i..$sy1)
+    {
+	printatceol ($x, $y+$_, "", $d);
+    }
+}
+
+##############################################################################
+
+# Indices into @F: current, lowest visible, highest visible
+$FVCUR = 0;
+$FVLOW = 0;
+$FVHIGH = 0;
+
+# Move CUR if it is not 0 <= CUR <= $#V
+sub FVreboundCUR ()
+{
+    $FVCUR = 0 if $FVCUR < 0;
+    $FVCUR = $#V if $FVCUR > $#V;
+}
+
+sub FVreframe ($$) # (validity, screen_target_for_cursor)
+{
+    my ($validity, $target) = @_;
+    $REBUG_STR .= " FVref(".join(',',@_).")" if $REBUG & 1;
+    my $syd = $MODE eq 'LV' ? $SYLVVD : $SYFVD;
+
+# my ($p, $f, $l) = caller;
+# print FDEB "FVreframe: width=$syd low=$FVLOW hi=$FVHIGH V[0]=$V[0] f=$f l=$l\n";
+
+    if ($validity == VALID_NAUGHT)
+    {
+	# Make sure CUR is valid, in case array shrunk
+	FVreboundCUR ();
+
+	# Compute LOW & HIGH
+comp_lo_hi:
+	if ($target == REF_HIGH)
+	{
+	    $FVHIGH = $FVCUR;
+	    $FVHIGH = $#V if $FVHIGH > $#V;
+	    $FVLOW = $FVHIGH - ($syd-1);
+	    $FVLOW = 0 if $FVLOW < 0;
+	}
+	else
+	{
+	    $FVLOW = $target == REF_LOW ? $FVCUR :
+		$FVCUR - int ($syd / 2);
+	    $FVLOW = 0 if $FVLOW < 0;
+	    $FVHIGH = $FVLOW + $syd-1;
+	    $FVHIGH = $#V if $FVHIGH > $#V;
+	}
+	# Redraw
+	FVredraw ();
+    }
+    elsif ($validity == VALID_LOW_HIGH)
+    {
+	# Make sure CUR is valid, in case array shrunk
+	FVreboundCUR ();
+
+	goto comp_lo_hi unless ($FVLOW <= $FVCUR && $FVCUR <= $FVHIGH);
+    }
+    elsif ($validity == VALID_LOW_CUR)
+    {
+	# Sanity: Cur >= LOW, otherwise kick it back to comp_lo_hi
+	goto comp_lo_hi unless $FVLOW <= $FVCUR;
+	
+	# Compute HIGH
+	$FVHIGH = $FVLOW + $syd-1;
+	$FVHIGH = $#V if $FVHIGH > $#V;
+
+	# Redraw
+	FVredraw ();
+    }
+    elsif ($validity == VALID_ALL)
+    {
+	# Redraw
+	FVredraw ();
+    }
+    else
+    {
+	confess "Validity is garbage";
+    }
+    $REBUG_STR .= ":{$FVLOW,$FVCUR,$FVHIGH}" if $REBUG & 1;
+}
+
+# Just draw without clearing screen
+sub FVredraw ()
+{
+    $REBUG_STR .= " FVred" if $REBUG & 1;
+    my ($x,$y,$d) = $MODE eq 'LV' ? ($SXLVV0, $SYLVV0, $SXLVVD) : ($SXFV0, $SYFV0, $SXFVD);
+    my $sy1 = $MODE eq 'LV' ? $SYLVV1 : $SYFV1;
+
+# my ($p, $f, $l) = caller;
+# print FDEB "FVredraw: width=$d low=$FVLOW hi=$FVHIGH V[0]=$V[0] f=$f l=$l\n";
+    my $i = 0;
+    if (@V)
+    {
+	if ($FV_SEARCH)
+	{
+	    my $A = $STR_INVERSE;
+	    my $B = $STR_PLAIN;
+	    my $L = length ($A) + length ($B);
+	    # Highlight with BOLD any matches
+	    for ($FVLOW..$FVHIGH)
+	    {
+		my $z = substr ($V[$_], 0, $d);
+		my $n = $z =~ s/($FV_SEARCH)/$A$1$B/g;
+		printatceol ($x, $y+$i++, $z, $d + $L * $n);
+	    }
+	}
+	else
+	{
+	    for ($FVLOW..$FVHIGH)
+	    {
+		printatceol ($x, $y+$i++, $V[$_], $d);
+	    }
+	}
+    }
+    for ($i..$sy1)
+    {
+	printatceol ($x, $y+$_, "", $d);
+    }
+}
+
+##############################################################################
+
+sub save_modes ()
+{
+
+    my @list = ($MODE, $FL_MODE, $DG_MODE, $FL_FORMAT, $DG_FORMAT, 
+		$FV_MODE, $FV_SEARCH, $FV_FILE, $FV_NAME,
+		$LINK_FORMAT, $TAG_MODE, $TAR_MODE,
+		$DGCUR, $DGLOW, $DGHIGH, $FLCUR, $FLLOW, $FLHIGH);
+    print FDEB "+++ Saving modes: depth=",scalar @MODE,": ", join (", ", @list),
+    	"\n" if $DEBUG & 4;
+    push @MODE, \@list;
+}
+
+sub restore_modes (;$)
+{
+    my $until_next_not_in_tar = shift;
+
+    my @popage;
+    do
+    {
+	print FDEB "restore_modes popping one...\n";
+	@popage = 
+	    ($MODE, $FL_MODE, $DG_MODE, $FL_FORMAT, $DG_FORMAT,
+	     $FV_MODE, $FV_SEARCH, $FV_FILE, $FV_NAME,
+	     $LINK_FORMAT, $TAG_MODE, $TAR_MODE,
+	     $DGCUR, $DGLOW, $DGHIGH, $FLCUR, $FLLOW, $FLHIGH) =
+	         @MODE > 1 ? @{pop @MODE} : @{$MODE[0]};
+
+	# Pop again if wanted and possible
+    } while @MODE && $until_next_not_in_tar && $MODE[-1][11];
+
+    print FDEB "+++ Restored modes:($until_next_not_in_tar): depth=",scalar @MODE,": ", join (", ", @popage),
+    	"\n" if $DEBUG & 4;
+}
+
+# Assuming $GP, $FP, $DGCUR, $FLCUR are all valid.
+sub jump_to_mode ()
+{
+    my $current_file = @FP ? $FP[$FLCUR] : undef;
+    my $current_dir = $GP[$DGCUR];
+
+    print FDEB "Jump_to_mode cf=$current_file cd=$current_dir mode=$MODE\n"
+	if $DEBUG & 4;
+
+    if ($MODE eq 'LV')		# View a list of files + 1 file
+    {
+	compute_file_list ($current_dir);
+	$FV_MODE = deduce_file_view_mode ($current_file);
+	compute_file_view ($current_file);
+	FLreframe (VALID_NAUGHT, REF_LOW);
+	FVreframe (VALID_NAUGHT, REF_LOW);
+    }
+    elsif ($MODE eq 'FV')	# View one file
+    {
+	if ($FV_MODE eq 'help')
+	{
+	    # Returning to help; assume @V still valid
+	    FVreframe (VALID_LOW_CUR, REF_LOW);
+	}
+	else
+	{
+	    # Not returning to help; compute new @V
+	    $FV_MODE = deduce_file_view_mode ($FV_FILE);
+	    compute_file_view ($FV_FILE);
+	    FVreframe (VALID_NAUGHT, REF_LOW);
+	}
+    }
+    elsif ($MODE eq 'FL')	# View a list of files
+    {
+	compute_file_list ($current_dir);
+	FLreframe (VALID_NAUGHT, REF_CEN);
+    }
+    elsif ($MODE eq 'DG')	# View a directory graph + a list of files
+    {
+#	compute_dir_graph ($current_dir);
+#	compute_file_list ($current_dir);
+	DGreframe (VALID_NAUGHT, REF_CEN);
+    }
+}
+
+##############################################################################
+
+# Get a directory for destination of copy/move.  Allow for reentering DG mode
+# if user wants to pick it graphically
+# Also, support creating sub directories?
+sub get_dir_dest ($$$$)
+{
+    my ($parent, $prompt, $histlist, $ref_topics) = @_;
+    get_dir_dest_xy (0, $SYMSG, @_);
+}
+
+sub get_dir_dest_xy ($$$$$$)
+{
+    my ($x, $y, $parent, $prompt, $histlist, $ref_topics) = @_;
+    my $to;
+again:
+    $to = read_a_line_xy ($parent, $x, $y, $prompt, "DIRDEST-$histlist",
+		       ['Choosing Destination Directories', @{$ref_topics}], $to,
+	sub 
+        {
+	    my $key = shift;
+	    if ($key eq '?' || $key eq $KEY_F2)
+	    {
+		# Graphical picker
+		save_modes ();
+		disp_message ("Pick a directory then press Enter");
+		$MODE = 'DG';
+		$TAG_MODE = 'any';
+		$FL_MODE = 'current';
+		my $pick;
+
+		# Recurse, and get directory
+		do
+		{
+		    # Save hints
+		    local %DISP_CACHE;
+		    ($pick) = work (1);	
+		};
+		# Restore hints
+		printat (0, $_) for ($SYFIRST..$SYMSG-1);
+
+		$line = $pick, $cur = length ($line) if defined $pick;
+		restore_modes ();
+		jump_to_mode ();
+		return 1; # Key handled
+	    }
+	    0; # key not handled
+	});
+    return undef unless $to;
+
+    $to = make_path_absolute ($to, $parent);
+    unless (-e $to)
+    {
+	my $ok = read_a_key (0, $SYMSG, 
+		"No such directory '$to'.  Create? [yn] ", "yn\x1b", []);
+	return undef if $ok eq "\1b";
+	goto again unless $ok =~ /^y/i;
+	# Yes = create
+	
+	$ok = shell_exec ("mkdir -p '$to'", "");
+	if ($ok)
+	{
+	    $ok = read_a_key (0, $SYMSG,
+			      "Trouble with mkdir: '$ok'.  Pick another [yn]",
+			      "yn\x1b", []);
+	    goto again unless $if =~ /^y/i;
+	    return undef;
+	}
+    }
+    print FDEB "got '$to'\n" if $DEBUG & 1;
+    $to;
+}
+
+# Operates on basenames: from -> to, if to is RE, then do subst
+sub rename_of ($$)
+{
+    my ($from, $to) = @_;
+    return $from unless $to;
+    # No wildcards
+    return $to unless $to =~ m:[/*]:;
+
+    if ($to =~ m:^(s|tr|y)/:)
+    {
+	# s/// or tr// given by user. Just use it
+	eval ("\$from =~ ".$to);
+    }
+    elsif ($to =~ /\*/)
+    {
+	# Replacement with wildcards
+	if ($to =~ /\./)
+	{
+	    # wildcards with name.ext
+
+	    # Force empty extensions if no . in name
+	    my $from_no_dot = 0;
+	    $from_no_dot = 1, $from .= '.' unless $from =~ /\./;
+	    
+	    # Split from/to into name and ext.  
+	    # Neither ends up with (implied) . that splits them.
+	    my ($fromname,$fromext) = $from =~ /^(.*)\.([^.]*)$/;
+	    my ($toname,$toext) = $to =~ /^(.*)\.([^.]*)$/;
+
+	    my $re_toname = $toname;
+	    $re_toname =~ s/\./\\./g;  # Keeps .'s literal
+	    $re_toname =~ s/\*/\${1}/g;  # * in replacement
+	
+	    my $re_toext = $toext;
+	    $re_toext =~ s/\./\\./g;  # Keeps .'s literal
+	    $re_toext =~ s/\*/\${2}/g;  # * in replacement
+	    
+	    eval ('$from =~ s/^(.*)\.([^.]*)$/'.$re_toname.'.'.$re_toext."/");
+	    
+	    $from =~ s/\.$// if $from_no_dot;
+	}
+	else
+	{
+	    # Wildcards but no . in the name
+	    my $re_to = $to;
+	    $re_to =~ s/\./\\./g;  # Keeps .'s literal
+	    $re_to =~ s/\*/\$1/g;  # * in replacement
+
+	    eval ('$from =~ s/^(.*)$/'.$re_to."/");
+	}
+    }
+    $from;
+}
+
+# Turn a path into a base name (including extension... just not
+# including any leading directory path)
+sub basename ($)
+{
+    my $path = shift;
+    (my $base) = $path =~ m:^.*/([^/]+)$:;
+    $base;
+}
+
+# Turn a path into a parent and base name
+sub dir_and_basename ($)
+{
+    my $path = shift;
+    my $x = my ($dir, $base) = $path =~ m:^(.*)/([^/]+)$:;
+# print FDEB "path='$path' x=$x dir='$dir' base='$base'\n" if 1 & 1;
+    confess "path='$path' x=$x dir='$dir' base='$base'" unless $x == 2;
+    $dir = $S unless $dir;
+    ($dir, $base);
+}
+
+# Turn a path into a parent and base name
+# Used by tab completion.  Doesn't crash if missing directory
+sub dir_and_basename_relaxed ($)
+{
+    my $path = shift;
+    my ($x, $dir, $base);
+    $x = ($dir, $base) = $path =~ m:^(.*)/([^/]+)$:;
+    $x = ($dir, $base) = $path =~ m:^(.*)/$: unless $x;
+    ($dir, $base) = ("~", $path) unless $x;
+    $dir = $S unless $dir;
+    ($dir, $base);
+}
+
+sub make_path_absolute ($$)
+{
+    my ($path, $current_dir) = @_;
+
+    $path =~ s-~-$HOME-;
+
+    # Prepend full path if not staring with a /
+    $path = $current_dir . $S . $path unless $path =~ m:^/:;
+
+    # Remove all .. expressions  /a/b/c/../../d -> /a/b/../d -> /a/d
+    1 while ($path =~ s:/[^/]+/\.\.::);
+
+    # Remove all .  expressions  /a/b/c/././d -> /a/b/c/./d  -> a/b/c/d
+    1 while ($path =~ s:/\.(?=(/|$))::);
+
+    $path;
+}
+
+    
+
+##############################################################################
+
+sub edit ($)
+{
+    my $file = shift;
+    ReadMode ($TERM_NORMAL);
+    shell_exec_system ("emacs '$file'", "Invoking editor...");
+    ReadMode ($TERM_CBREAK);
+}
+
+##############################################################################
+
+# copy /a/b/c -> /usr given /a/b/c/d:
+# /usr/a/b/c/d	tar -C /      -c a/b/c     | tar -C /usr -x		ulf=n
+# /usr/c/d	tar -C /a/b   -c c         | tar -C /usr -x		ulf=n
+# /usr/d	tar -C /a/b/c -c -T $$.xyz | tar -C /usr -x; rm $$.xyz	ulf=y
+#                      $chdir    $src|$tarsrc       $dest
+#
+# naming the directory for tar to read from.
+# $Tagged_only will filter for tagged files only if set
+sub alt_copy ($$$$$$)
+{
+    my ($fullsrc, $src, $dest, $chdir, $use_list_file, $tagged_only) = @_;
+
+    print FDEB "alt_copy: fullsrc=$fullsrc src=$src dest=$dest chdir=$chdir ulf=$use_list_file tom=$tagged_only\n" if $DEBUG & 1;
+
+    my $list_file = "/tmp/$$.xyz";
+    my $tarsrc = $use_list_file ? "-T '$list_file'" : $src;
+    
+    my $cmd = "(tar -C '$chdir' -c $tarsrc | tar -C '$dest' -x)";
+
+    print FDEB "alt_copy: list=$list_file tarsrc=$tarsrc\n    cmd=$cmd\n" if $DEBUG & 1;
+    if ($tagged_only)
+    {
+	open (FAC, ">$list_file") || confess "Can't open '$list_file' for write";
+	confess unless $H{$fullsrc}{isdir};
+	for (sort keys %H)
+	{
+	    next unless /^$fullsrc/;
+	    print FDEB "Checking $_ for tag...\n" if $DEBUG & 1;
+	    next unless $H{$_}{tag} || !$tagged_only;
+	    s/^$chdir$S//;
+	    print FDEB "adding $_\n" if $DEBUG & 1;
+	    print FAC $_,"\n";
+	}
+	close FAC;
+    }
+    elsif ($use_list_file)
+    {
+	open (FAC, ">$list_file") || confess "Can't open '$list_file' for write";
+	confess unless $H{$fullsrc}{isdir};
+	for (sort (keys %{$H{$fullsrc}{dkids}}, keys %{$H{$fullsrc}{fkids}}))
+	{
+	    print FDEB "Checking $fullsrc$S$_ for tag...\n" if $DEBUG & 1;
+	    next unless $H{$fullsrc . $S . $_}{tag} || !$tagged_only;
+	    print FDEB "adding $_\n" if $DEBUG & 1;
+	    print FAC $_,"\n";
+	}
+	close FAC;
+    }
+
+    # my $CC = $cmd; $CC =~ s/\|.*$/-f \/tmp\/$$.tar)/; print FDEB "cc=$CC: '", `$CC 2>&1`, "'\n";
+    # return 0;
+
+    my $x = shell_exec ($cmd, "Copying...");
+    print FDEB "$cmd RETURNED '$x'\n" if $DEBUG & 1;
+
+    $x = grab_upto_newline ($x);
+    if ($x)
+    {
+	disp_message ("Trouble with tar: $x");
+    }
+    if ($tagged_only || $use_list_file)
+    {
+	unlink $list_file;
+    }
+    $x;
+}
+
+##############################################################################
+
+sub dir_diffs ($$)
+{
+    my ($dir1, $dir2) = @_;
+
+    our @nofiles = ();
+    my $file = "/tmp/$$.lst";
+    open FOUT, ">$file" || confess;
+
+    do_dir_diffs ($dir1, $dir2);
+
+    print FOUT "*"x($SX-1),"\n" if @nofiles;
+    print FOUT for (@nofiles);
+    close FOUT;
+
+    # Show it
+    my $W = ($SX-47)/2;
+    view_file ($file, "Directory Diffs < ". ellipsis_path($dir1, $W) ." > ".
+	       ellipsis_path($dir2, $W));
+
+    # Be done with it
+    unlink $file;
+}
+
+sub do_dir_diffs ($$)
+{
+    my ($dir1, $dir2) = @_;
+
+    opendir (my $FIN, $dir1) or die;
+    my @f = readdir ($FIN);
+    closedir ($FIN);
+    for (sort @f)
+    {
+	if (-f "$dir1/$_")
+	{
+	    if (-f "$dir2/$_")
+	    {
+		my $x = shell_exec_all ("diff -b $dir1/$_ $dir2/$_", "Diffing...");
+		print FOUT "<"x30," $dir1/$_\n$x" if $x;
+	    }
+	    else
+	    {
+		push @nofiles, "NO SUCH FILE IN $dir2 AS $_\n";
+	    }
+	}
+	elsif (-d _)
+	{
+	    next if /^\.\.?$/;
+	    if (-d "$dir2/$_")
+	    {
+		do_dir_diffs ("$dir1/$_", "$dir2/$_");
+	    }
+	    else
+	    {
+		push @nofiles, "NO SUCH DIRECTORY IN $dir2 AS $_\n";
+	    }
+	}
+    }
+}
+
+##############################################################################
+
+# unzip_mode:
+#  0 = all files
+#  1 = 1 file
+#  2 = tagged files
+sub unzip_files ($@)
+{
+    my ($unzip_mode, @scratch) = @_;
+    
+    my $N = @scratch;
+    disp_message ("No tagged files to unzip"), return 
+	unless $N || !$unzip_mode;
+    
+    my $what_got_done = "Nothing done";
+    my $tar = $TAR_MODE;
+    hintatceol (0, $SYHINT0, "[F1] Help  [F2] Pick  [Up/Down] History  [Enter] Ok  [Esc] Abort", $SX);
+    printatceol (0, $SYHINT1, "", $SX);
+    printatceol (0, $SYHINT2, 
+		 sprintf ("Extract %s from archive '$tar'",
+			  $unzip_mode==2 ? sprintf ("%d tagged files", $N) :
+			  $unzip_mode==1 ? "'$scratch[0]'":
+			  "all files"),
+		 $SX);
+    # Ohmygod: Need original @GP and @G etc!  
+    # This is because get_dir_dest can, with F2, recurse into work()
+    # Fortunately (Hah) 'o' saved them all in TARSAV_...
+    my $dirdest;
+    do
+    {
+	our @GP = @TARSAV_GP;
+	our @G = @TARSAV_G;
+	our ($DGCUR, $DGLOW, $DGHIGH) = 
+	    ($TARSAV_DGCUR, $TARSAV_DGLOW, $TARSAV_DGHIGH);
+	our %H = %TARSAV_H;
+	$dirdest = get_dir_dest ($GP[$DGCUR], 
+				 "Enter destination directory: ", "Alt-e", 
+				 ['Extracting Files from Archives']);
+	disp_message ($what_got_done), return unless $dirdest;
+    };
+
+    # Extract them
+    disp_message ("Extracting...");	# This could take some time
+    my $x;
+    if ($unzip_mode==2)
+    {
+	# Tagged files: Write out list
+	my $file = "/tmp/$$.lst";
+	open FOUT, ">$file" || confess;
+	for my $f (@scratch)
+	{
+	    $_ = $f;
+	    s/^$S//;
+	    print FOUT $_,"\n";
+	}
+	close FOUT;
+	# Only tagged ones
+	$cmd = sprintf ("tar -C '$dirdest' -x%s -f '%s' -T %s", $tar =~ /gz$/i ? "z" : "", $tar, $file);
+	$x = shell_exec ($cmd, "Tarring...");
+	unlink $file unless $x;
+    }
+    elsif ($unzip_mode==1)
+    {
+	# 1 file
+	my $onefile = shift @scratch;
+	$onefile =~ s/^$S//;
+	$cmd = sprintf ("tar -C '$dirdest' -x%s -f '%s' %s",
+			$tar =~ /gz$/i ? "z" : "", $tar, $onefile);
+	$x = shell_exec ($cmd, "Tarring...");
+    }
+    else
+    {
+	# All of them
+	$cmd = sprintf ("tar -C '$dirdest' -x%s -f '%s'", $tar =~ /gz$/i ? "z" : "", $tar);
+	$x = shell_exec ($cmd, "Tarring...");
+    }
+
+    # Fully log destination
+    log_dir ($dirdest, -1);
+
+    # Report errors
+    if ($x)
+    {
+	disp_message ("Trouble with tar: $x");
+	print FDEB "Trouble extracting tar: $cmd\n   yeilds: $x\n" if $DEBUG & 1; 
+    }
+    else
+    {
+	disp_message ("Success");
+	$key = "\x1b";
+    }
+}
+
+sub zip_up_files ($$@)
+{
+    my ($current_dir, $is_tagged_zip, @scratch) = @_;
+    
+    my $N = @scratch;
+    disp_message ("No tagged files to zip up"), return unless $N;
+    
+    my $what_got_done = "Nothing done";
+    
+    # Find longest parent in common
+    my $longest = $H{$scratch[0]}{parent};
+    # print FDEB "Longest to start=$longest from $scratch[0]\n";
+    for (@scratch)
+    {
+	my $p = $_;
+	while (($p = $H{$p}{parent}) ne $S)
+	{
+	    last if $longest =~ /^$p/;
+	}
+	$longest = $p;
+	# print FDEB "Longest to $longest from $_ with p=$p\n";
+    }
+    my $longest_len = get_level ($longest);
+
+    # Make sure it has a trailing slash
+    $longest .= $S unless $longest eq $S;
+    hintatceol (0, $SYHINT0, "[F1] Help  [Up/Down] History  [Enter] to Accept  [Esc] to Abort", $SX);
+    printatceol (0, $SYHINT1, "", $SX);
+    printatceol (0, $SYHINT2, 1||$is_tagged_zip ? 
+		 "Longest common path = '$longest'" : "", $SX);
+    
+    my @topics = ($is_tagged_zip ? 'Archiving Tagged Files' : 'Archiving the Current Branch',
+		  'Archive Files');
+
+    # Get archive name
+get_name:
+    my $archive = read_a_line_with_tab ($current_dir, $is_tagged_zip ? 
+		"Archive $N tagged files to [path/file.ext] :" :
+		"Archive branch below $scratch[0] to [path/file.ext] :",  
+			       "ctrl-z", [@topics]);
+
+    if (defined $archive)
+    {
+	# Check for user accidentally pressing Enter w/o entering a name
+	goto get_name unless $archive;
+
+	# Expand path
+	$archive = make_path_absolute ($archive, $current_dir);
+
+	# Ok to overwrite?
+	if (-e $archive)
+	{
+	    hintatceol (0, $SYHINT0, "Warning: Operation will overwrite destination:", $SX);
+	    my $ok = ok_to_overwrite ("Create Archive", undef, 
+				      ellipsis_path($archive, $SX-20));
+	    goto get_name unless $ok eq 'y';
+	}
+
+	printatceol (0, $SYHINT1, $is_tagged_zip ? 
+		     "Archive $N tagged files" :
+		     "Archive branch below $scratch[0]", $SX);
+	printatceol (0, $SYHINT2, "To: ". ellipsis_path ($archive, $SX-10), $SX);
+
+	# Control how much of path goes into archive
+	my $show_len = $longest_len;
+	my $showdest;
+zip_again:
+	($showdest, my $dummy, my $rest) = $longest =~ m:(/([^/]+/){$show_len})(.*$):;
+	$rest = $is_tagged_zip ? $rest . '*' : $rest . basename ($current_dir);
+	hintatceol (0, $SYHINT0, "[F1] Help  [p] Change placement  [Enter] Accept  [Esc] Abort", $SX);
+	my $ok = read_a_key (0, $SYMSG, 
+		    "Relative to '$showdest' archive '$rest' [p=change placement, Enter=accept] ",
+			     "p\r\x1b", [@topics]);
+										
+	disp_message ($what_got_done), return if $ok eq "\x1b";
+	if ($ok =~ /^p/i)
+	{
+	    $show_len = ($longest_len+$show_len) % ($longest_len+1);
+	    goto zip_again;
+	}
+	if ($ok eq "\r")
+	{
+	    # remove trailing slash
+	    my $chdir = $showdest;
+	    $chdir =~ s:/$:: unless $chdir eq $S;
+	    
+	    my $tar_gz = $archive =~ /\.tgz$|\.tar\.gz$/ ? "z" : "";
+	    
+	    # Write out list
+	    my $file = "/tmp/$$.lst";
+	    open FOUT, ">$file" || confess;
+	    for my $f (@scratch)
+	    {
+		$_ = $f;
+		s/^$showdest//;
+		print FOUT $_,"\n";
+	    }
+	    close FOUT;
+	    # my $cmd = "tar c$tar_gz -f $archive --no-recursion -C $chdir -T $file";
+	    my $cmd = "tar c$tar_gz -f $archive -C $chdir -T $file";
+	    my $W = ($SX-30)/3;
+	    my $ecmd = "tar c" . ellipsis_path($tar_gz, $W) ." -f "
+		. ellipsis_path($archive, $W) ." -C "
+		. ellipsis_path($chdir, $W) ." -T $file";
+	    $ok = read_a_key (0, $SYMSG, "Confirm: '$ecmd' [yn] ", "yn\x1b", [@topics]);
+
+	    disp_message ("<ABORTED>"), return unless $ok ne "\x1b";
+	    disp_message ($what_got_done), return unless $ok =~ /^y/i;
+
+	    my $x = shell_exec ($cmd, "Tarring...", $current_dir);
+	    unlink $file unless $x;
+	    $what_got_done = $x;
+
+	    my ($d, $n) = dir_and_basename($archive);
+	    add_file_to_H ($n, $d);
+	}
+    }
+    disp_message ($what_got_done);
+}
+
+##############################################################################
+
+# the FV_SEARCH variable holds the current search string, but as an uncompiled
+# RE.  We have to quote away meta characters if we want to it match plain
+# text.  We leave it her, still uncompiled, but ready for compilation.
+sub set_fv_search ($$)
+{
+    $FV_SEARCH = shift;
+    my $plain_text = shift;
+    $FV_SEARCH =~ s/([\$\@.+*\(\)\[\]\{\}\\^\$|?])/\\$1/g if $plain_text;
+}
+
+sub view_file ($$)
+{
+    my ($file, $name) = @_;
+    save_modes ();
+    do {
+	$MODE = 'FV';
+	$FV_FILE = $file;
+	$FV_NAME = $name;
+	work (1);	# Recurse
+    };
+    restore_modes();
+    jump_to_mode ();
+}
+   
+##############################################################################
+
+# From a tar $tar, unpack 1 file $target to directory $dest
+sub extract_file ($$$)
+{
+    my ($tar, $target, $dest) = @_;
+    $target =~ s/^$S//;
+    my $cmd = sprintf ("tar -C %s -x%s -f '%s' '%s'", $dest,
+		       $tar =~ /gz$/i ? "z" : "", $tar, $target);
+    print FDEB "extract file: <$cmd>\n" if $DEBUG & 1; 
+    my $x = shell_exec ($cmd, "Extracting...");
+    print FDEB "$cmd RETURNED '$x'\n" if $DEBUG & 1;
+}
+
+##############################################################################
+
+
+
+##############################################################################
+
+# Run a shell command and harvest one line of results.
+# Return blank for OK, err msg otherwise
+# 2nd arg is string to display during execution,
+# 3rd arg is optional dir to chdir to first
+sub shell_exec ($$;$)
+{
+    grab_upto_newline (&shell_exec_all);
+    # Blank=ok. Err msg otherwise
+    # Note: $? gets set to non-zero if copy fails (also)
+}
+
+# Run a shell command and harvest all lines of results.
+# Return blank for OK, err msg otherwise
+# 2nd arg is string to display during execution,
+# 3rd arg is optional dir to chdir to first
+sub shell_exec_all ($$;$)
+{
+    my ($cmd, $str, $chdir) = @_;
+    chdir $chdir if $chdir;
+    disp_message ($str);
+    my $result = `$cmd 2>&1`;
+    leave_chdir_safe () if $chdir;
+    # Blank=ok. Err msg otherwise
+    # Note: $? gets set to non-zero if copy fails (also)
+    $result;
+}
+
+# Run a shell command using system instead (e.g. emacs needs this)
+# Return blank for OK, err msg otherwise
+# 2nd arg is string to display during execution,
+# 3rd arg is optional dir to chdir to first
+sub shell_exec_system ($$;$)
+{
+    my ($cmd, $str, $chdir) = @_;
+    chdir $chdir if $chdir;
+    disp_message ($str);
+    print "\r\n";
+    system $cmd;
+    leave_chdir_safe () if $chdir;
+}
+
+##############################################################################
+ 
+# Truncate a long path if needed (if > $len)
+sub ellipsis_path ($$)
+{
+    my ($path, $len) = @_;
+
+    my $l = length $path;
+    my $start = int (.4 * $len);
+    my $remove = ($l - $len + 3);
+    substr ($path, $start, $remove) = '...' if $remove > 0;
+    $path;
+}
+
+# $need_as constants
+use constant NO_AS => 0;
+use constant NEED_AS => 1;
+use constant NEED_AS_NONEMPTY => 2;
+
+# $need_dirdest constants
+use constant NO_DIRDEST => 0;
+use constant NEED_DIRDEST => 1;
+
+
+# Used by ctrl-copy, rename, move, delete
+#                  copy  rename  move  delete
+# $need_as:         1       2      1     0
+# $need_dirdest:    1       0      1     0
+#
+# $X is "Copy", "Rename"...
+# &$subconfirm is confirmation operation sub, that returns a string, like 'rm $file'
+# &$subop actually performs op, given 
+# these locals: ($file, $base, $basenew, $dir, $dirdest);
+# &$subsuccess performs bookkeeping if successful.
+# Return 1 if we should leave work()
+sub ctrl_operation ($$$$$&&&&&)
+{
+    # Operate on tagged files
+
+    (local ($current_dir, $current_file), 
+     my($need_as, $need_dirdest, $ref_topics, $X, 
+	$subprompt, $subconfirm, $subcheck, $subop, $subsuccess)) = @_;
+    my $subcheck_all = 0;
+
+    local $what_got_done = "Nothing done";
+    local ($file, $base, $basenew, $dir, $dirdest, $dest);
+
+    my $spaces = " "x(length ($X)-2);
+
+    my $as;
+    if ($need_as)
+    {
+	hintatceol (0, $SYHINT0, 
+		sprintf ("[F1] Help  [Up/Down] History %s [Esc] Abort",
+			 $need_as == NEED_AS ? "" : " [Enter] Same "), $SX);
+	printatceol (0, $SYHINT1, "$X tagged files", $SX);
+	disp_message ($need_as == NEED_AS_NONEMPTY ? 
+		      "Enter a rename expression " :
+		      "Enter a rename expression or just press [Enter] for same ");
+	$as = read_a_line_xy ($current_dir, 0, $SYHINT2, $spaces."as: ", "ctrl-$X", 
+		['Renaming', $ref_topics ? @{$ref_topics} : ("Multiple File $X", 'Tagged File Operations')]);
+	# give up if not defined as || (NEED_AS_NONEMPTY and !as)
+	# give up unless defined as && (NOT_NEED_AS_NONEMPTY || as)
+	disp_message ($what_got_done), return 0
+	    unless defined $as && ($as || $need_as != NEED_AS_NONEMPTY);
+    }
+
+    if ($need_dirdest)
+    {
+	hintatceol (0, $SYHINT0, "[F1] Help  [F2] Pick  [Up/Down] History  [Enter] Ok  [Esc] Abort", $SX);
+	printatceol (0, $SYHINT1, $as ?
+		     "$X tagged files as: $as" : 
+		     "$X tagged files", $SX);
+	disp_message ("Enter destination directory");
+	$dirdest = get_dir_dest_xy (0, $SYHINT2, $current_dir, $spaces . "to: ", 
+				    "ctrl-$X", [$ref_topics ? @{$ref_topics} : ()]);
+	disp_message ($what_got_done), return 0 unless $dirdest;
+
+	$dirdest = $current_dir . $S . $dirdest 
+	    unless $dirdest =~ m:^/:;
+    }
+
+    # Do prompt, if requested
+    if ($subprompt)
+    {
+	my $ok = &{$subprompt};
+	disp_message ($what_got_done), return 0 unless $ok;	
+    }
+
+    # Individual confirmation?
+    hintatceol (0, $SYHINT0, "[F1] Help  [y] require individual confirmation  [n] $X without confirmation  [Esc] abort", $SX);
+    printatceol (0, $SYHINT1, $as ?
+		 "$X tagged files as: $as" : 
+		 "$X tagged files", $SX);
+    printatceol (0, $SYHINT2, $need_dirdest ? sprintf ("%sto: %s", $spaces, $dirdest) : "", $SX);
+    my $confirm_each = read_a_key (0, $SYMSG, 
+			"Confirm $X for each file [yn] ", "yn\x1b", ["multiple file $X"]);
+    disp_message ($what_got_done), return 0 unless $confirm_each !~ /^\x1b/;
+
+    my $n = 0;
+
+    # Create scratch list with only visible tagged files.
+    my @scratch = grep { $H{$_}{tag} } @FP;
+    
+    for $file (@scratch)
+    {
+	($dir, $base) = dir_and_basename ($file);
+
+	# Do rename
+	$basenew = $need_as ? rename_of ($base, $as) : $base;
+
+	# Create full path of destination
+	$dest = $need_dirdest ? $dirdest : $dir;
+	$dest .= $S unless $dest eq $S;
+	$dest .= $basenew;
+
+	if ($confirm_each !~ /^n/i)
+	{
+	    operation_refresh ($current_dir);
+	    # Highlight
+	    my $fline = find_file_in_fp ($file);
+	    highlight_cursor ($SXFL0, $fline - $FLLOW + $SYFL0, $F[$fline], $SXFLD) if @F;
+
+	    my $strop = &{$subconfirm};
+	    hintatceol (0, $SYHINT0, "[F1] Help  [y] to $X  [n] to skip  [Esc] to Abort", $SX);
+	    printatceol (0, $SYHINT1, sprintf ("%s: %s", $X, $file), $SX);
+	    printatceol (0, $SYHINT2, $need_dirdest ? sprintf ("%sto: %s", $spaces, $dest) : 
+			 $need_as == NEED_AS_NONEMPTY ? sprintf ("%sas: %s", $spaces, $dest) : "", $SX);
+	    my $ok = read_a_key (0, $SYMSG, 
+		"Confirm '$strop' [yn] ", "yn\x1b", ["multiple file $X"]);
+	    disp_message ("<ABORTED>"), last unless $ok ne "\x1b";
+	    next unless $ok =~ /^y/i;
+
+	    unhighlight_cursor () if @F;
+	}
+
+	# Perform check
+	my $ok = $subcheck_all || &{$subcheck};
+	if ($ok eq 'N')
+	{
+	    # Remember to assume 'y' for the rest
+	    $ok = $subcheck_all = 'n';
+	}
+	disp_message ($what_got_done), next if $ok eq 'n'; # No -> skip
+	# Abort if ESC pressed
+	if ($ok eq 'e')
+	{
+	    my $leave = operation_refresh ($current_dir);
+	    disp_message ("Aborted!  (But completed $X on $n files)");
+	    return $leave;
+	}
+	if ($ok eq 'A')
+	{
+	    # Remember to assume 'y' for the rest
+	    $ok = $subcheck_all = 'y';
+	}
+	confess "ok='$ok'" unless $ok eq 'y';
+
+	# Do Operation now
+	my $x = &{$subop};
+
+	if ($x)
+	{
+	    my $ok = read_a_key (0, $SYMSG, 
+		 "Trouble with $X: '$x' Press [Enter] or [Esc]: ",
+		 "\r\x1b", ["multiple file $X"]);
+	    last if $ok eq "\x1b";
+	}
+	else
+	{
+	    # Success
+	    $n++;
+
+	    &{$subsuccess};
+	}
+    }
+    my $leave = operation_refresh ($current_dir);
+    disp_message ("Completed $X on $n files");
+    return $leave;
+}
+
+# Return 1 if we should leave work()
+sub single_operation ($$$$$$&&&&&)
+{
+    # Operate on tagged files
+
+    (local ($current_dir, $current_file), 
+     my($need_as, $need_dirdest, $ref_topics, $X, 
+	$subprompt, $subconfirm, $subcheck, $subop, $subsuccess)) = @_;
+
+    local $what_got_done = "Nothing done";
+    local ($file, $base, $basenew, $dir, $dirdest, $dest);
+
+    my $spaces = " "x(length ($X)-2);
+
+    ($dir, $base) = dir_and_basename ($current_file);
+    $file = $current_file;
+
+    my $as;
+    if ($need_as)
+    {
+	hintatceol (0, $SYHINT0, 
+		sprintf ("[F1] Help  [Up/Down] History %s [Esc] Abort",
+			 $need_as == NEED_AS ? "" : " [Enter] Same "), $SX);
+	printatceol (0, $SYHINT1, sprintf ("%s: %s", $X, $base), $SX);
+	disp_message ($need_as == NEED_AS_NONEMPTY ? 
+		      "Enter a rename expression " :
+		      "Enter a rename expression or just press [Enter] for same ");
+	$as = read_a_line_xy ($current_dir, 0, $SYHINT2, $spaces."as: ", $X, 
+			      ['Renaming', $ref_topics ? @{$ref_topics} : ("Single File $X", 'File Operations')]);
+	# hintatceol (0, $SYHINT0, "", $SX);
+	# printatceol (0, $SYHINT1, "", $SX);
+	# give up if not defined as || (NEED_AS_NONEMPTY and !as)
+	# give up unless defined as && (NOT_NEED_AS_NONEMPTY || as)
+	disp_message ($what_got_done), return 0
+	    unless defined $as && ($as || $need_as != NEED_AS_NONEMPTY);
+    }
+
+    # Do rename
+    $basenew = $need_as ? rename_of ($base, $as) : $base;
+
+    if ($need_dirdest)
+    {
+	hintatceol (0, $SYHINT0, "[F1] Help  [F2] Pick  [Up/Down] History  [Enter] Ok  [Esc] Abort", $SX);
+	printatceol (0, $SYHINT1, sprintf ("%s: %s%s", $X, $base,
+					   $as ? sprintf (" as: %s", $basenew) : ""), $SX);
+	disp_message ("Enter destination directory");
+	$dirdest = get_dir_dest_xy (0, $SYHINT2, $current_dir, $spaces . "to: ", 
+				    $X, [$ref_topics ? @{$ref_topics} : ()]);
+	# hintatceol (0, $SYHINT0, "", $SX);
+	# printatceol (0, $SYHINT1, "", $SX);
+	# printatceol (0, $SYHINT2, "", $SX);
+	disp_message ($what_got_done), return 0 unless $dirdest;
+
+	$dirdest = $current_dir . $S . $dirdest 
+	    unless $dirdest =~ m:^/:;
+    }
+
+    # Create full path of destination
+    $dest = $need_dirdest ? $dirdest : $dir;
+    $dest .= $S unless $dest eq $S;
+    $dest .= $basenew;
+
+    # Do prompt, if requested
+    if ($subprompt)
+    {
+	my $ok = &{$subprompt};
+	disp_message ($what_got_done), return 0 unless $ok;	
+    }
+
+    # Do confirm
+    my $strop = &{$subconfirm};
+    hintatceol (0, $SYHINT0, "[F1] Help  [y] to $X  [n] to skip  [Esc] to Abort", $SX);
+    printatceol (0, $SYHINT1, sprintf ("%s: %s", $X, $file), $SX);
+    printatceol (0, $SYHINT2, $need_dirdest ? sprintf ("%sto: %s", $spaces, $dest) : 
+		 $need_as == NEED_AS_NONEMPTY ? sprintf ("%sas: %s", $spaces, $dest) : "", $SX);
+    my $ok = read_a_key (0, $SYMSG, 
+			 "Confirm $strop [yn] ", "yn\x1b", [$ref_topics ? @{$ref_topics} : "single file $X"]);
+    disp_message ("<ABORTED>"), return 0 unless $ok ne "\x1b";
+    disp_message ($what_got_done), return 0 unless $ok =~ /^y/i;
+
+    # Perform check
+    $ok = &{$subcheck};
+    $ok =~ tr/AN/yn/; # Map All to yes, None to no
+    disp_message ("Aborted!"), return 0 if $ok eq 'e'; # ESC->Abort
+    disp_message ($what_got_done), return 0 if $ok eq 'n'; # No->Skip
+    confess unless $ok eq 'y';
+
+    # Do Operation now
+    my $x = &{$subop};
+
+    my $leave = 0;
+    if ($x)
+    {
+	$what_got_done = "Trouble with $X: '$x'";
+    }
+    else
+    {
+	$what_got_done = $x;
+
+	&{$subsuccess};
+	$leave = operation_refresh ($current_dir);
+    print FDEB "leave='$leave'\n" if $DEBUG & 1;
+    }
+    disp_message ($what_got_done);
+    return $leave;
+}
+
+# Return 1 if we should leave work()
+sub operation_refresh ($)
+{
+    my $current_dir = shift;
+    if ($MODE eq 'FL' || $MODE eq 'LV')
+    {
+	compute_file_list ($current_dir);
+	if (@FP)
+	{
+	    # Normal case for FL or LV modes: there are still files to show.
+	    FLreboundCUR ();
+	    FLreframe (VALID_LOW_CUR, REF_LOW);
+	    if ($MODE eq 'LV')
+	    {
+		my $current_file = $FP[$FLCUR];
+		$FV_MODE = deduce_file_view_mode ($current_file);
+		compute_file_view ($current_file);
+		FVreframe (VALID_NAUGHT, REF_LOW);
+	    }
+	}
+	else
+	{
+	    # Handle case of being in FL mode, but when our operation finishes,
+	    # there are no more files left (delete, move).  Then put user
+	    # in dir graph mode.
+	    # $MODE = 'DG';
+	    # $FL_MODE = 'current';
+	    # jump_to_mode ();
+	    #
+	    # Rather than push him there, lets try popping one off if we can....
+	    # Heck, let's just try popping him out, regardless
+
+	    # I THINK THIS IS THE ONE CAUSING PROBLEMS
+	    # restore_modes ();
+	    # jump_to_mode ();
+	    return 1;
+	}
+    }
+    elsif ($MODE eq 'DG')
+    {
+	$DGCUR = compute_dir_graph ($current_dir);
+	jump_to_mode ();
+    }
+    else
+    {
+	confess;
+    }
+    return 0;
+}
+
+# Return 'y' if ok to overwrite.
+# Return 'n' if not ok to overwrite
+# Return 'e' if ESC was pressed
+# Return 'A' if A (All) was pressed
+# Return 'N' if N (Never) was pressed
+# X= operation, src,dest=full paths.
+# If src is undef, then don't display it.
+sub ok_to_overwrite ($$$)
+{
+    my ($X, $src, $dest) = @_;
+    local $FL_FORMAT = 'long';
+    printatceol (0, $SYMSG-2, "From: ".format_file_line ($src, 1), $SX) if $src;
+    printatceol (0, $SYMSG-1, "  To: ".format_file_line ($dest, 1), $SX);
+    my $ok = read_a_key (0, $SYMSG, "$X: Ok to overwrite '$dest' ? [y]es [n]o [A]ll [N]one [ESC] Abort ",
+			 "ynAN\x1b");
+    $ok = 'e' if $ok eq "\x1b";
+    return $ok;
+}
+
+##############################################################################
+
+$INPUT = "*sq";
+
+sub read_whole_key ()
+{
+    my ($key, $subkey);
+if ($PROFILE)
+{
+    ($key, $INPUT) = $INPUT =~ /^(.)(.*)$/;
+}
+else
+{
+    $key = Term::ReadKey::ReadKey (0);
+    $key .= $subkey while (defined ($subkey = Term::ReadKey::ReadKey (-1)));
+}
+    $key;
+}
+
+# Returns undef OR a whole key
+sub read_whole_key_or_nothing ()
+{
+    my ($key, $subkey);
+    $key = Term::ReadKey::ReadKey (-1);
+    if (defined($key))
+    {
+	$key .= $subkey while (defined ($subkey = Term::ReadKey::ReadKey (-1)));
+    }
+    $key;
+}    
+
+
+
+# Display a prompt and read 1 key from matching set 
+# Args:
+#	x, y cursor position
+#	Prompt string
+#	String of legal keys that will be accepted.
+# Optional Args:
+#	ref to [list of help topics]
+sub read_a_key ($$$$;$)
+{
+    my ($x, $y, $prompt, $match, $topics) = @_;
+    my $key;
+    my @topics = $topics ? @{$topics} : ();
+    printatceol ($x, $y, $prompt, $SX);
+    cursor ($x+length($prompt),$y);
+    while (1)
+    {
+	$key = read_whole_key ();
+	if ($key eq $KEY_F1)
+	{
+	    help_picker (1, @topics) if @topics;
+	    printatceol ($x, $y, $prompt, $SX);
+	    cursor ($x+length($prompt),$y);
+	    next;
+	}
+	last if $key =~ /[$match]/;
+    }
+    $key;
+}
+
+# Display prompt and read a line up to \n
+# Return undef if <esc>
+# Args:
+#	Prompt string
+#	history list key
+#	ref to [list of help topics]
+# Optional Args:
+#	Inital line to edit
+#	subroutine to handle special keys
+sub read_a_line ($$;$$&)
+{
+    read_a_line_xy (0, 0, $SYMSG, @_);
+}
+
+# Just like read_a_line, but allow tab to do completion
+sub read_a_line_with_tab ($$$;$$&)
+{
+    my $current_dir = shift;
+    read_a_line_xy ($current_dir, 0, $SYMSG, @_);
+}
+
+# History kept here
+%RH = ();
+
+# accept_tab controls if [tab] => file completion.  If non-zero, it should be
+# the current directory.
+sub read_a_line_xy ($$$$$&;$&)
+{
+    local ($accept_tab, $x, $y, $prompt, $hist, $ref_topics, $initvalue, $sub_keys) = @_;
+    local $line = @_ > 6 ? $initvalue : "";
+    my $key;
+    local $cur = length ($line);
+    local $cur0 = $x + length $prompt;
+
+    while (1)
+    {
+	printatceol ($x, $y, $prompt . $line, $SX);
+	cursor ($cur0+$cur, $y);
+	$key = read_whole_key ();
+
+	if ($sub_keys)
+	{
+	    # Process special key handler that returns
+	    #   undef to exit read_a_line with undef
+	    #	0 for not a special key, continue with normal key handling
+	    #   1 for key handled, keep reading keys
+	    my $x = $sub_keys->($key);
+	    return $x unless defined $x;
+	    next if $x;
+	}
+	if ($key eq "\x1b")
+	{
+	    printatceol ($x, $y, $prompt . " <ABORTED>", $SX);
+	    return undef;
+	}
+	last if $key eq "\r" || $key eq $KEY_KENTER;
+	if ($key eq $KEY_F1)
+	{
+	    my @topics = (@{$ref_topics}, 'Line Editor', 'Index', 'Help Viewer', 'The XYZ Project'); 
+	    help_picker (1, @topics);
+	}
+	elsif ($key eq $KEY_UP || $key eq $KEY_DOWN) # Up arrow, down arrow 
+	{
+	    $line = edit_history ($hist);
+	    $cur = length ($line);
+	}
+	elsif ($key ge ' ' && $key le '~')	# Normal character, just append
+	{
+	    substr ($line, $cur, 0) = $key;
+	    $cur++;
+	}
+	elsif ($key eq $KEY_BKSP)	# BS
+	{
+	    if ($cur > 0)
+	    {
+		$cur--;
+		substr ($line, $cur, 1) = "";
+	    }
+	}
+	elsif ($key eq $KEY_DELETE || $key eq "\cd")	# DEL
+	{
+	    substr ($line, $cur, 1) = "" if $cur < length ($line);
+	}
+	elsif ($key eq "\ck")	# DEL
+	{
+	    substr ($line, $cur) = "" if $cur < length ($line);
+	}
+	elsif ($key eq $KEY_LEFT || $key eq "\cb")	# <-
+	{
+	    $cur-- if $cur > 0;
+	}
+	elsif ($key eq $KEY_RIGHT || $key eq "\cf")	# ->
+	{
+	    $cur++ if $cur < length ($line);
+	}
+	elsif ($key eq $KEY_HOME || $key eq "\ca")
+	{
+	    $cur = 0;
+	}
+	elsif ($key eq $KEY_END || $key eq "\ce")
+	{
+	    $cur = length ($line);
+	}
+	elsif ($key eq "\t" && $accept_tab)
+	{
+	    # Tab: file completion... Note: $accept_tab is $current_dir
+	    my $current_dir = $accept_tab;
+	    my $path = make_path_absolute ($line, $current_dir);
+
+	    my ($dir, $basename) = dir_and_basename_relaxed ($path);
+	    # print "\r\n";
+	    # print "path='$path'\r\n";
+	    # print "dir='$dir'\r\n";
+	    # print "basename='$basename'\r\n";
+
+	    if (-d $dir)
+	    {
+		if (opendir (FDIR, $dir))
+		{
+		    my @files = readdir FDIR;
+		    close FDIR;
+		    # print "fdir='",join(',',@files),"'\r\n";
+
+		    my @matchers = sort grep { /^\Q$basename\E/ } @files;
+		    # print "matchers='",join(',',@matchers),"'\r\n";
+
+		    if (@matchers==1)
+		    {
+			# Perfect match
+			my $common = shift @matchers;
+			printatceol (0, $SYHINT2, "Unique!", $SX);
+			$line =~ s/$basename$/$common/;
+			$line .= "/" if -d $line;
+			$cur = length ($line);
+		    }
+		    elsif (@matchers)
+		    {
+			# Find common part of matchers
+			my $save = my $common = shift @matchers;
+			for my $c (@matchers)
+			{
+			    for (1..length $common)
+			    {
+				if (substr($common, 0, $_) ne substr ($c, 0, $_))
+				{
+				    $common = substr($common, 0, $_-1);
+				    last;
+				}
+			    }
+			}
+			unshift @matchers, $save;
+			printatceol (0, $SYHINT2, "Matches: ". join(' ',@matchers), $SX);
+			# print "common='$common'\r\n";
+			$line =~ s/$basename$/$common/;
+			$cur = length ($line);
+		    }
+		    else
+		    {
+			printatceol (0, $SYHINT2, "No Matches!", $SX);
+		    }
+		}
+	    }
+	}
+    }
+    add_to_history ($hist, $line);
+    $line;
+}
+
+##############################################################################
+
+sub save_history ($)
+{
+    # Save out history
+    my $hist = shift;
+
+    if (open (FOUT, ">$hist"))
+    {
+	for my $h (sort keys %RH)
+	{
+	    print FOUT "$h\n";
+	    for my $line (@{$RH{$h}})
+	    {
+		print FOUT "\t$line\n";
+	    }
+	}
+	close FOUT;
+    }
+}
+
+sub load_history ($)
+{
+    # Save out history
+    my $hist = shift;
+
+    if (open (my $FIN, "$hist"))
+    {
+	undef %RH;
+	my $h;
+	while (<$FIN>)
+	{
+	    chomp;
+	    $h = $_, next unless s/^\t//;
+	    push @{$RH{$h}}, $_;
+	}
+	close $FIN;
+    }
+}
+
+# View a history list and pick a line out and return it, 
+# or return undef for Esc
+sub edit_history ($)
+{
+    my $hist = shift;
+
+    # Return value
+    my $retval = undef;
+
+    do
+    {
+	# Create a new FL
+	local @F = @{$RH{$hist}};
+	local ($FLLOW, $FLCUR, $FLHIGH) = (0, $#F, $#F);
+
+	# Render list
+	FLreframe (VALID_ALL, REF_LOW);
+
+	while (1)
+	{
+	    highlight_cursor ($SYFL0, $FLCUR - $FLLOW + $SYFL0, $F[$FLCUR], $SXFLD) if @F;
+	    my $key = read_whole_key ();
+	    unhighlight_cursor() if @F;
+
+	    last if $key eq "\x1b"; # Esc = Abort
+	    $retval = $F[$FLCUR], last if $key eq "\r" || $KEY eq $KEY_KENTER; # Return = Pick this one
+
+	    if (@F)
+	    {
+		if ($key eq $KEY_UP || $key eq $KEY_DOWN) # Up arrow, down arrow 
+		{
+		    $FLCUR = ($FLCUR + ($key eq $KEY_UP ? -1 : 1)) % scalar @F;
+		}
+		elsif ($key eq $KEY_DELETE || $key eq $KEY_BKSP) # Del
+		{
+		    splice @F, $FLCUR, 1;
+		    $FLHIGH--;
+		    FLreboundCUR ();
+		    FLreframe (VALID_ALL, REF_LOW);
+		}
+	    }
+	}
+	# Update list if we picked one (that is, save any deletes)
+	@{$RH{$hist}} = @F if defined $retval;
+    };
+
+    # Restore screen
+    jump_to_mode ();
+
+    # Return value
+    $retval;
+}
+
+# Remove duplicates and add to end if len > 1;
+sub add_to_history ($$)
+{
+    my ($hist, $value) = @_;
+    @{$RH{$hist}} = grep {$_ ne $value} @{$RH{$hist}};
+    push @{$RH{$hist}}, $value if length($value) > 1;
+}
+
+##############################################################################
+
+@HLC = ();
+
+sub highlight_cursor ($$$$)
+{
+    my ($x, $y, $str, $clen) = @HLC = @_;
+    iprintatceol ($x, $y, $str, $clen);
+}
+
+sub unhighlight_cursor ()
+{
+    my ($x, $y, $str, $clen) = @HLC;
+    printatceol ($x, $y, $str, $clen);
+}
+
+##############################################################################
+
+# Don't omit not_first topics for searching, only for showing index
+# @not_first = qw(the a an and or with on);
+
+sub add_topic ($$)
+{
+    my ($topic, $line) = @_;
+    my @topic = split ' ', lc $topic;
+    for (0..$#topic)
+    {
+	my $tt = $topic[$_];
+	# Don't omit not_first topics for searching, only for showing index
+	# next if grep /$tt/, @not_first;
+	my $t0 = join (' ', @topic[$_..$#topic]);
+	my $t1 = join (' ', @topic[0..$_-1]);
+	my $t = $_ ? join (', ', $t0, $t1) : $t0;
+	confess "repeated help topic: $t" if $HELP_TOPIC{$t};
+	$HELP_TOPIC{$t} = $line;
+    }
+}
+
+sub read_in_help ($)
+{
+    my $help = shift;
+    my $last = "";
+    open (my $FIN, "expand '$help' 2>&1 |") || confess "Can't open 'expand $help'";
+    while (<$FIN>)
+    {
+	chomp;
+	s/\r//;
+	push @HELP_V, $_;
+	if (length $last == length)
+	{
+	    if (/^[-=\.]+$/)
+	    {
+		add_topic ($last, $.-2);
+	    }
+	}
+	$last = $_;
+    }
+    # Push on some empty lines so that we can scroll last real line
+    # all the way to the top
+    push @HELP_V, "" for (1..$SYFVD);
+    close $FIN;
+}
+
+# sub vtbot ()
+# {
+#     for (sort keys %DISP_CACHE)
+#     {
+# 	print FDEB "  ",$_, "=",$DISP_CACHE{$_},"\n";
+#     }
+# }
+
+# Show a menu of help choices, then pick one and display it
+# Input: a list of topics
+sub help_picker ($@)
+{
+    my ($save_modes, @topics) = @_;
+    my $N = $#topics;
+
+    do
+    {
+# print FDEB "help_picker does local DISP_CACHE:\n"; # vtbot ();
+
+	# Save hints
+	local %DISP_CACHE if $save_modes;
+
+# print FDEB "Help picker entered: save=$save_modes topics=",join(', ', @topics),"\n";
+
+	# Is there a choice?
+	my $tnum = 0;
+	if (@topics > 1)
+	{
+	    # Render a list of topics to choose from
+	    my $y = $SYFIRST;
+	    iprintatceol (0, $y++, 'Available Help Topics:', $SX);
+	    my $t = "   ";
+	    for my $i (0..$#topics)
+	    {
+again:
+		my $t0 = $t;
+		$t .= sprintf ("[%s] %s     ", $i, $topics[$i]);
+		if (length ($t) > $SX)
+		{
+		    iprintatceol (0, $y++, $t0, $SX);
+		    $t = "   ";
+		    goto again;
+		}
+	    }
+	    iprintatceol (0, $y++, $t, $SX);
+	    for (;$y<=$SYLAST; $y++)
+	    {
+		iprintatceol (0, $y, "", $SX);
+	    }
+	    # Let user pick one
+another:
+	    $tnum = read_a_key (0, $SYMSG, 
+				   "Enter topic number [0..$N] ", "0123456789\x1b");
+	    disp_message ("<ABORTED>"), goto abort if $tnum eq "\x1b";
+	    goto another unless $tnum >= 0 && $tnum <= $N;
+	}
+	disp_message ("");
+
+	my $topic = lc $topics[$tnum];
+	my $line = $HELP_TOPIC{$topic};
+	confess "Can't find help for '$topic'" unless $line;
+
+	# View that topic
+	if ($FV_MODE eq 'help')
+	{
+	    # We're already in help: Don't save_modes
+
+	    # Save current topic and position on HELP_STACK
+	    push @HELP_STACK, [$HELP_TOPIC, $FVCUR];
+
+	    # Compute new topic and position and status line
+	    $HELP_TOPIC = $topic;
+	    $FVLOW = $FVCUR = $line-1;
+	    $FV_NAME = "XYZ Help  Topic '$HELP_TOPIC'  Level " . (1+@HELP_STACK);
+
+	    # Reframe on new topic and return to caller, which was work()
+	    FVreframe (VALID_LOW_CUR, REF_LOW);
+	}
+	else
+	{
+	    # We're not in help yet.  Save modes
+	    save_modes ();	
+	    do {
+		# Jump into help mode; set @V to help data, change FV_MODE
+		local @V = @HELP_V;
+		
+		$FV_MODE = 'help';
+		$FV_SEARCH = qr'\(see[^)]*\)?';
+		$MODE = 'FV';
+
+		# Compute new topic and position and status line
+		$HELP_TOPIC = $topic;
+		$FVLOW = $FVCUR = $line-1;
+		$FV_NAME = "XYZ Help  Topic '$HELP_TOPIC'  Level " . (1+@HELP_STACK);
+
+		# Reframe on new topic and return to caller, which was work()
+		FVreframe (VALID_LOW_CUR, REF_LOW);
+
+		# Enter file viewer, but don't jump to mode because we're don't
+		# want to open and read $FV_FILE... We just stuffed @V directly
+# print FDEB "Help_picker: recursing on work (1,1)\n";
+		work (1, 1);
+# print FDEB "Help_picker: finished with work (1,1)\n";
+		# Exited file viewer, we're done
+	    };
+	    restore_modes();
+	    jump_to_mode ();
+	    @HELP_STACK = ();
+	}
+abort:
+# print FDEB "help_picker to end local DISP_CACHE:\n"; # vtbot ();
+    };
+    
+    # Restore hints
+    if ($save_modes)
+    {
+# print FDEB "help_picker does restore hints: DISP_CACHE:\n"; # vtbot ();
+	printat (0, $_) for ($SYFIRST..$SYMSG-1);
+    }
+}
+
+# User wants to return to previous help context, or maybe exit if no previous.
+# Return 1 if we should stay in help viewer
+sub help_restore ()
+{
+    if (@HELP_STACK)
+    {
+	# Pop off topic and cursor
+	($HELP_TOPIC, $FVCUR) = @{pop @HELP_STACK};
+	$FVLOW = $FVCUR;
+	$FV_NAME = "XYZ Help  Topic '$HELP_TOPIC'  Level " . (1+@HELP_STACK);
+
+	# Reframe on new topic
+	FVreframe (VALID_LOW_CUR, REF_LOW);
+
+	# Stay in help viewer
+	return 1;
+    }
+
+    # Get out of help viewer
+    # (which will eventually return to help_picker() just after work(1,1)
+    @HELP_STACK = ();
+    return 0;
+}
+    
+##############################################################################
+
+sub chmod_hints ()
+{
+    hintatceol (0, $SYHINT0, "[F1] Help  [u]ser|[g]roup|[o]ther|[a]ll  [+]|[-]|[=]  [r]ead|[w]rite|e[x]ecute|[s]uid|s[t]icky|[u]ser|[g]roup|[o]ther", $SX);
+    hintatceol (0, $SYHINT1, "chmod {ugoa}{+-=}{rwxXstugo} or 1-4 octal digits.", $SX);
+}
+
+##############################################################################
+
+sub FLDGhints ()
+{
+    # For FL, DG MODES:
+
+    # All modes keys
+    hintatceol (0, $SYHINT0, 
+		$MODE eq 'LV' ? 
+	'[ARROWS] [q]uit [F1/?] Help [s/^s]howall [^b]ranch [k/^k]current [g/^g]raph dir' :
+	'[ARROWS] [q]uit [F1/?] Help [s/^s]howall [b/^b]ranch [k/^k]current [g/^g]raph dir', $SX);
+
+    hintatceol (0, $SYHINT1,
+		$MODE eq 'LV' ? 
+	'[M-s]ort [f/^f]ilter [l]og [V] list view [^p]erl [G]raph [L]ink [a]scii [b]inary' :
+		$MODE eq 'FV' ?
+	'[M-s]ort [f/^f]ilter [l]og [V] list view [^p]erl [M-f/F]ile [G]raph [L]ink [a]scii [b]inary' :
+	        # Otherwise
+	'[M-s]ort [f/^f]ilter [l]og [V] list view [^p]erl [M-f/F]ile [G]raph [L]ink', $SX);
+    # Mode specific keys
+    if ($TAR_MODE)
+    {
+	hintatceol (0, $SYHINT2, $MODE eq 'DG' ? 
+	'[n]ext [p]rev [/-+*] Log [t]ag [u]ntag [M-e/^e]xtract' :
+		$MODE eq 'FL' ? 
+	'[t/^t]ag [u/^u]ntag [v]iew [M-e/^e]xtract':
+		# Mode eq 'LV'
+	'[n]ext [p]rev [t/^t]ag [u/^t]ntag [v]iew [M-e/^e]xtract',
+		$SX);
+    }
+    else
+    {
+	hintatceol (0, $SYHINT2, $MODE eq 'DG' ? 
+	'[n]ext [p]rev [/-+*] Log [t]ag [u]ntag [r]ename [m]ake [d]elete [a]ccess [M-c]opy [M-p]rune [M-g]raft [M-z]ip [M-k] diff' :
+		$MODE eq 'FL' ? 
+	'[t/^t]ag [u/^u]ntag [d/^d]elete [c/^c]opy [x/^x]move [r/^r]ename [a/^a]ccess [v]iew [o]pen tar [^z]ip [S]earch [e]dit':
+		# Mode eq 'LV'
+	'[n]ext [p]rev [t/^t]ag [u/^u]ntag [d/^d]elete [c/^c]opy [x/^x]move [r/^r]ename [v]iew [o]pen tar [^z]ip [S]earch [e]dit',
+		$SX);
+    }
+}
+
+sub FVhints ()
+{
+    # All modes keys are still true, but they waste screen space
+    # Mode specific keys
+    hintatceol (0, $SYHINT2, 
+      $FV_MODE eq 'help' ?
+	'[a]scii [b]inary [/] Search  [Space] Find next  [Enter] Follow (see...)  [Esc] Exit help' :
+	'[a]scii [b]inary [/] Search  [Space] Find next  [Esc] Return to previous mode', $SX);
+}
+
+sub FVsearch_hints ($)
+{
+    my ($plain_text) = @_;
+    # All modes keys are still true, but they waste screen space
+    # Mode specific keys
+    hintatceol (0, $SYHINT2, 
+	'[F2] Search type: ' . ($plain_text ? 'Plain Text' : 'Perl Regular Expression') .
+        '  [Enter] Accept and find first  [F1] Help  [Esc] Exit', $SX);
+}
+
+sub FLsearch_hints ($$$)
+{
+    my ($match_case, $polarity, $type) = @_;
+    hintatceol (0, $SYHINT0, "", $SX);
+    hintatceol (0, $SYHINT1, "", $SX);
+    hintatceol (0, $SYHINT2, sprintf ("[F1] Help  [F2]:%s  [F3]:%s  [F4]:%s ",
+	    $match_case ? "Match case" : "Ignore case",
+	    $polarity < 0 ? "Matches untagged" : "Matches left tagged",
+	    $type), $SX);
+}
+
+sub FLDGstats ()
+{
+    # Display totals
+    printatceol (0, $SYTOTAL, 
+		 sprintf ("Vis/Log Dir%s/%s: File%s/%s: Byte%s/%s",
+		      format10K($FL_DIRS),  flush_left(format10K($TOTAL_DIRS)), 
+		      format10K($FL_FILES), flush_left(format10K($TOTAL_FILES)), 
+		      format_size($FL_BYTES), flush_left(format_size($TOTAL_BYTES))),
+		 $SX);
+    my $submodes;
+    if ($MODE eq 'DG')
+    {
+	$submodes = sprintf ("Dir Graph(%s,%s)", $DG_FORMAT, $LINK_FORMAT);
+    }
+    elsif ($MODE eq 'FL')
+    {
+	$submodes = sprintf ("File List(%s+%s,%s,%s)", $FL_MODE, $TAG_MODE, $FL_FORMAT, $LINK_FORMAT);
+    }
+    elsif ($MODE eq 'LV')
+    {
+	$submodes = sprintf ("List View(%s+%s,%s)", $FL_MODE, $TAG_MODE, $FV_MODE);
+    }
+    if ($TAR_MODE)
+    {
+	$submodes = "Tar:" . $submodes;
+    }
+    iprintatceol (0, $SYMODE, 
+	     sprintf ("%s Mode=%s Filter(Glob='%s' RE='%s') Mode Stack=%d",
+		      $VERSION, $submodes, $FILTER_GLOB, $FILTER, scalar @MODE), $SX);
+}
+
+sub FVstats ()
+{
+    # Use global $FV_NAME as name of file to title display
+    my $lines = @V;
+    my $syd = $MODE eq 'LV' ? $SYLVVD : $SYFVD;
+    my $percent = $FVHIGH < $lines-1 ? 100*$FVLOW/($lines-$syd) : 100;
+    iprintatceol (0, $SYFVSTATUS, sprintf ("Line %d of %d (%d%%) %s", 
+		$FVLOW, $lines, $percent, $FV_NAME), $SX);
+}
+
+sub display_highlights_stats_and_hints ()
+{
+    $current_file = @FP ? $FP[$FLCUR] : undef;
+    $current_dir = $GP[$DGCUR];
+    if ($MODE eq 'LV')
+    {
+	FLDGstats ();
+	FLDGhints ();
+
+	# Fake out format_file_line...
+	local $FL_FORMAT = 'datepath';  # To get path instead of name in date listing
+	printatceol (0, $SYCURDIR, format_file_line($current_file, 1), $SX);
+
+	# Highlight with inverse cursor line
+	# printf FDEB "\@F=%d y=$FLCUR - $FLLOW + $SYFL0 FLCUR=%d\n", scalar @F, $FLCUR;
+	highlight_cursor ($SXLVL0, $FLCUR - $FLLOW + $SYLVL0, $F[$FLCUR], $SXLVLD) if @F;
+    }
+    elsif ($MODE eq 'FL')
+    {
+	FLDGstats ();
+	FLDGhints ();
+
+	printatceol (0, $SYCURDIR, $current_file, $SX);
+
+	# Highlight with inverse cursor line
+	# printf FDEB "\@F=%d y=$FLCUR - $FLLOW + $SYFL0 FLCUR=%d\n", scalar @F, $FLCUR;
+	highlight_cursor ($SXFL0, $FLCUR - $FLLOW + $SYFL0, $F[$FLCUR], $SXFLD) if @F;
+    }
+    elsif ($MODE eq 'DG')
+    {
+	FLDGstats ();
+	FLDGhints ();
+
+	# Display details of current dir
+	my $nfiles, $size;
+	if ($H{$current_dir}{logged} > 0)
+	{
+	    $nfiles = sprintf ("%4d Files", scalar keys %{$H{$current_dir}{fkids}});
+	    $size = format_size ($H{$current_dir}{familysize});
+	}
+	else
+	{
+	    $nfiles = "Not Logged";
+	    $size = ' ' x length (format_size (123));
+	}
+	printatceol (0, $SYCURDIR, sprintf ("%s %s %s", $nfiles, $size, $current_dir), $SX);
+
+	# Highlight with inverse cursor line
+	my $width = $DG_FORMAT eq 'both' ? $SXDGD : $SXDGDg;
+	$width += length ($STR_START_ALT . $STR_END_ALT) if $LINES && $DG_FORMAT =~ /both|graph/;
+	highlight_cursor ($SXDG0, $DGCUR - $DGLOW + $SYDG0, $G[$DGCUR], $width) if @G;
+    }
+    elsif ($MODE eq 'FV')
+    {
+	FVstats ();
+	FVhints ();
+    }
+}
+
+##############################################################################
+
+# This is the main UI even loop
+sub work (;$$)
+{
+
+    my $RETURN_IS_QUIT = shift;	# Set to 1 if "Return" or "Esc" should quit work();
+    				# Set to -1 if only "Esc" should quit work() (only used by open tar)
+    				# Set to 0 if neither should happen (i.e., top level call)
+    # Try this for x31 only... stop allowing return to quit in general
+    # $RETURN_IS_QUIT = -1 if $RETURN_IS_QUIT;
+
+    my $DONT_JUMP_TO_MODE = shift; # Set to 1 if we shouldn't jump_to_mode
+
+    print FDEB "+++ Enter Work RIQ=$RETURN_IS_QUIT: cf=$current_file cd=$current_dir mode=$MODE\n" if $DEBUG & 1;
+    print FDEB "Enter work(ret_is_quit=$RETURN_IS_QUIT don't_jump=$DONT_JUMP_TO_MODE): cd=$GP[$DGCUR]\n" if $DEBUG & 4;
+
+    remind_before_after ();
+    jump_to_mode () unless $DONT_JUMP_TO_MODE;
+
+    local ($current_dir, $current_file);
+    my $key;
+
+    $current_file = @FP ? $FP[$FLCUR] : undef;
+    $current_dir = $GP[$DGCUR];
+    display_highlights_stats_and_hints ();
+
+big_redo:
+    while (1)
+    {
+	printatceol (0, $SYREBUG, $REBUG_STR, $SX-1), $REBUG_STR = "" if $REBUG & 1;
+	$key = read_whole_key ();
+	$REBUG_STR .= sprintf ("Key: %s", 
+		join ('', map { ($_ lt ' ' || $_ gt "\x7e") ? 
+				    sprintf ("<%02x>", ord) : $_ }
+		      split //, $key)) if $REBUG & 1;
+	printf FDEB "\nkey=%s\n",
+		join ('', map { ($_ lt ' ' || $_ gt "\x7e") ? 
+				    sprintf ("<%02x>", ord) : $_ }
+		      split //, $key) if $DEBUG & 4;
+	disp_message ("");
+	#
+	# Process Keys
+	#
+	if ($MODE eq 'FV')
+	{
+	    #
+	    # FILE VIEW: View single file
+	    #
+	    if ($key eq $KEY_UP || $key eq $KEY_DOWN) # Up arrow, down arrow 
+	    {
+		# unhighlight_cursor ();
+fv_down:
+		# Move cursor
+		$FVCUR-- if ($key eq $KEY_UP); # Up
+		$FVCUR++ if ($key eq $KEY_DOWN); # Down
+		$FVCUR = $#V-($SYFVD-1) if $FVCUR > $#V-($SYFVD-1);
+		$FVCUR = 0 if $FVCUR < 0;
+
+		# Redraw 
+		FVreframe (VALID_NAUGHT, REF_LOW);
+		FVstats ();
+		next;
+	    }
+	    if ($key eq $KEY_PGUP || $key eq $KEY_PGDN) # Page up, Page down
+	    {
+		# Compute current cursor position
+		my $cury = $FVCUR - $FVLOW;
+
+		# unhighlight_cursor ();
+
+		$FVCUR-= $SYFVD if $key eq $KEY_PGUP;
+		$FVCUR+= $SYFVD if $key eq $KEY_PGDN;
+		$FVCUR = $#V-($SYFVD-1) if $FVCUR > $#V-($SYFVD-1);
+		$FVCUR = 0 if $FVCUR < 0;
+		FVreframe (VALID_NAUGHT, REF_LOW);
+		FVstats ();
+		next;
+	    }
+	    if ($key eq $KEY_HOME || $key eq $KEY_END) # Home, End
+	    {
+		# unhighlight_cursor ();
+		$FVCUR = $key eq $KEY_HOME ? 0 : $#V-($SYFVD-1);
+		FVreframe (VALID_NAUGHT, REF_LOW);
+		FVstats ();
+		next;
+	    }
+	    if ($key eq '/')
+	    {
+		my $plain_text = 1;
+		FVsearch_hints ($plain_text);
+		my $search_for = read_a_line ("Search for: ", 'SEARCH', 
+					  ['Searching File Views'], "",
+		    sub {
+			my $key = shift;
+			if ($key eq $KEY_F2) # F2
+			{
+			    $plain_text = !$plain_text;
+			    FVsearch_hints ($plain_text);
+			    return 1; # we handled key
+			}
+			# No key handled
+			0;
+		    });
+		disp_message ("<ABORTED>"), next unless defined $search_for;
+		set_fv_search ($search_for, $plain_text);
+		my $x = eval {$FV_SEARCH = qr($search_for)};
+		unless (defined $x)
+		{
+		    print FDEB "trouble compiling regular expression: $@ '$search_for'\n";
+		    confess "trouble compiling plain text regular expression: $@ '$search_for'\n" if $plain_text;
+		    chomp ($_ = $@);
+		    disp_message ("Trouble: $_");
+		    next;
+		}
+		print FDEB "searching for pt=$plain_text fv='$search_for'\n";
+		$key = ' ';
+		# Fall through
+	    }
+	    if ($key eq ' ')
+	    {
+		# Bring next search string up to top of screen
+		for ($FVLOW+1..$#V)
+		{
+		    if ($V[$_] =~ /$FV_SEARCH/)
+		    {
+			$FVCUR = $_;
+			FVreframe (VALID_NAUGHT, REF_LOW);
+			next big_redo;
+		    }
+		}
+		disp_message ("<NOT FOUND>");
+		redo;
+	    }
+	    if (($key eq "\r" || $key eq $KEY_KENTER) && $FV_MODE eq 'help')
+	    {
+		# print FDEB "Got \\r and FV_MODE=='help'\n" if $DEBUG & 1;
+		# Follow link in help mode
+
+		print FDEB "+++ Return mapped to 'follow-link': key='$key' RIQ=$RETURN_IS_QUIT\n" if $DEBUG & 1;
+
+		# Find first '(see blah)'
+		my $list;
+		for (my $i = $FVLOW; $i<=$FVHIGH; $i++)
+		{
+		    next unless $V[$i] =~ /\(see(?:\s+(.*))?$/;
+		    $list = $1;
+		    last if $list =~ s/\).*//;
+		    # (see... must continue onto next line)
+		    (my $cont) = $V[$i+1] =~ /^([^\)]+)\)/;
+		    confess "Malformed (see ...) in help file line $i: list='$list' v[i+1]='$V[$i]'" unless $cont;
+		    # Contcatenate and reduce white space to a single space
+		    $list .= " " . $cont;
+		    $list =~ s/^\s+//;  # In caes of (see\n file filters), remove leading space
+		    $list =~ s/\s+/ /g;
+		    last;
+		}
+		# print FDEB "Ending loop in Got \\r and FV_MODE=='help'\n" if $DEBUG & 1;
+		redo unless $list;
+		
+		# Turn into a topic list
+		my @topics = split /; /, $list;
+		help_picker (0, @topics);
+
+		# avoid processing key again
+		next;
+	    }
+	    if ($key eq "\x1b" && $FV_MODE eq 'help')
+	    {
+		# Return to last help topic
+		if (help_restore ())
+		{
+		    # avoid processing key again
+		    next;
+		}
+		# Otherwise process ESC and exit help viewer
+		# Fall through
+	    }
+	}
+	if ($MODE eq 'LV')
+	{
+	    #
+	    # LIST VIEW: Files list on left, single file view on right
+	    #
+	    if ($key eq $KEY_UP || $key eq $KEY_DOWN) # Up arrow, down arrow 
+	    {
+		# Move cursor
+		$FVCUR-- if ($key eq $KEY_UP); # Up
+		$FVCUR++ if ($key eq $KEY_DOWN); # Down
+		$FVCUR = $#V-($SYLVVD-1) if $FVCUR > $#V-($SYLVVD-1);
+		$FVCUR = 0 if $FVCUR < 0;
+
+		# Redraw 
+		FVreframe (VALID_NAUGHT, REF_LOW);
+		next;
+	    }
+	    if ($key eq $KEY_PGUP || $key eq $KEY_PGDN) # Page up, Page down
+	    {
+		# Compute current cursor position
+		my $cury = $FVCUR - $FVLOW;
+
+		$FVCUR-= $SYLVVD if $key eq $KEY_PGUP;
+		$FVCUR+= $SYLVVD if $key eq $KEY_PGDN;
+		$FVCUR = $#V-($SYLVVD-1) if $FVCUR > $#V-($SYLVVD-1);
+		$FVCUR = 0 if $FVCUR < 0;
+		FVreframe (VALID_NAUGHT, REF_LOW);
+		next;
+	    }
+	    if ($key eq $KEY_HOME || $key eq $KEY_END) # Home, End
+	    {
+		unhighlight_cursor ();
+		$FVCUR = $key eq $KEY_HOME ? 0 : $#V-($SYLVVD-1);
+		FVreframe (VALID_NAUGHT, REF_LOW);
+		next;
+	    }
+	    if ($key =~ /^[np]/) # Next/Previous file
+	    {
+		unhighlight_cursor ();
+lv_next:
+		# Move cursor
+		$FLCUR-- if ($key eq 'p'); # Up
+		$FLCUR++ if ($key eq 'n'); # Down
+		$FLCUR = 0 if $FLCUR < 0;
+		$FLCUR = $#FP if $FLCUR > $#FP;
+
+		$FV_MODE = deduce_file_view_mode ($FP[$FLCUR]);
+		compute_file_view ($FP[$FLCUR]);
+
+		# Redraw 
+		FLreframe (VALID_LOW_HIGH, $key eq 'n' ? REF_HIGH : REF_LOW);
+		FVreframe (VALID_NAUGHT, REF_LOW);
+		next;
+	    }
+	}
+	if ($MODE eq 'FL')
+	{
+	    #
+	    # FILE LIST: List of files
+	    #
+	    if ($key eq $KEY_UP || $key eq $KEY_DOWN) # Up arrow, down arrow 
+	    {
+		unhighlight_cursor ();
+fl_down:
+		# Move cursor
+		$FLCUR-- if ($key eq $KEY_UP); # Up
+		$FLCUR++ if ($key eq $KEY_DOWN); # Down
+		$FLCUR = 0 if $FLCUR < 0;
+		$FLCUR = $#FP if $FLCUR > $#FP;
+
+		# Redraw 
+		FLreframe (VALID_LOW_HIGH, $key eq $KEY_DOWN ? REF_HIGH : REF_LOW);
+		next;
+	    }
+	    if ($key eq $KEY_PGUP || $key eq $KEY_PGDN) # Page up, Page down
+	    {
+		# Compute current cursor position
+		my $cury = $FLCUR - $FLLOW;
+
+		unhighlight_cursor ();
+
+		if ($key eq $KEY_PGUP)
+		{
+		    # Up a page. First to top of page, then up a page
+		    if ($cury == 0)
+		    {
+			$FLCUR-= $SYFLD;
+			$FLCUR = 0 if $FLCUR < 0;
+		    }
+		    else
+		    {
+			$FLCUR = $FLLOW;
+		    }
+		    FLreframe (VALID_LOW_HIGH, REF_LOW);
+		}
+		else
+		{
+		    # Down a page.  First to bottom, then down a page
+		    if ($cury == $SYFLD-1)
+		    {
+			$FLCUR+= $SYFLD;
+			$FLCUR = $#FP if $FLCUR > $#FP;
+		    }
+		    else
+		    {
+			$FLCUR = $FLHIGH;
+		    }
+		    FLreframe (VALID_LOW_HIGH, REF_HIGH);
+		}
+		next;
+	    }
+	    if ($key eq $KEY_HOME || $key eq $KEY_END) # Home, End
+	    {
+		unhighlight_cursor ();
+		$FLCUR = $key eq $KEY_HOME ? 0 : $#FP;
+		FLreframe (VALID_LOW_HIGH, $key eq $KEY_HOME ? REF_LOW : REF_HIGH);
+		next;
+	    }
+	}
+	if ($MODE eq 'LV' || $MODE eq 'FL')
+	{
+	    if ($key =~ /^[\ct\cu]$/)  # ctrl-t, ctrl-u
+	    {
+		unhighlight_cursor ();
+
+		# Tag/untag all visible files
+		$H{$_}{tag} = $key eq "\ct" for (@FP);
+
+		compute_file_list ($current_dir);
+		FLreframe (VALID_ALL, REF_CEN);
+		next;
+	    }
+	    if ($key =~ /^[tu]/)
+	    {
+		unhighlight_cursor ();
+
+		$H{$current_file}{tag} = $key eq 't';
+
+		# Recompute this one file line
+		$F[$FLCUR] = format_file_line ($current_file);
+
+		# Redraw
+		printatceol ($SXFL0, $SYFL0+$FLCUR-$FLLOW, $F[$FLCUR],
+			     $SXFLD);
+
+		# Set key to down arrow
+		
+		# Fall through
+		$key = 'n', goto lv_next if $MODE eq 'LV';
+		$key = $KEY_DOWN, goto fl_down ;
+	    }
+	    if ($key eq 'd' || $key eq "\cd")	# c-d ^d
+	    {
+		# Delete current / tagged file
+		my $fun = $key eq 'd' ? \&single_operation : \&ctrl_operation;
+		last if $fun->($current_dir, $current_file, 
+		    NO_AS, NO_DIRDEST, undef, "Delete",
+		    undef,
+                    sub { "rm " . ellipsis_path ($file, $SX-20-3) },
+		    sub { 'y' },
+		    sub { !unlink $file },
+		    sub { remove_file_from_H ($file) });
+		next;
+	    }
+	    if ($key eq 'c' || $key eq "\cc")	# c-c ^c
+	    {
+		# Copy current /tagged file
+		my $fun = $key eq 'c' ? \&single_operation : \&ctrl_operation;
+		$fun->($current_dir, $current_file, 
+		    NEED_AS, NEED_DIRDEST, undef, "Copy",
+		    undef,
+                    sub { "cp -p " . ellipsis_path ($file, ($SX-20-7)/2) . " " .
+			  ellipsis_path ($dest, ($SX-20-7)/2) },
+		    sub { 
+			if (-e $dest)
+			{
+			    if (-d $dest)
+			    {
+				$what_got_done = "<ERROR> The name '$basenew' is already used by a directory in '$dir'" ;
+				return 'n';
+			    }
+			    return ok_to_overwrite ("Copy", $file, $dest);
+			}
+			'y'; },
+		    sub { shell_exec ("cp -p '$file' '$dest'", "Copying...") },
+		    sub { add_file_to_H ($basenew, $dirdest) });
+		next;
+	    }
+	    if ($key eq 'x' || $key eq "\cx")	# c-x ^x
+	    {
+		# Move current / tagged file
+		my $fun = $key eq 'x' ? \&single_operation : \&ctrl_operation;
+		last if $fun->($current_dir, $current_file,
+		    NEED_AS, NEED_DIRDEST, undef, "Move",
+		    undef,
+                    sub { "mv " . ellipsis_path ($file, ($SX-20-4)/2) . " " .
+			  ellipsis_path ($dest, ($SX-20-4)/2) },
+		    sub { -e $dest ? 
+			ok_to_overwrite ("Move", $file, $dest) : 'y' },
+		    sub { shell_exec ("mv '$file' '$dest'", "Moving...") },
+		    sub {
+			remove_file_from_H ($file);
+			add_file_to_H ($basenew, $dirdest);
+		    });
+		next;
+	    }
+	    if ($key eq 'r' || $key eq "\cr")	# c-r ^r
+	    {
+		# Rename current / tegged file
+		my $fun = $key eq 'r' ? \&single_operation : \&ctrl_operation;
+		$fun->($current_dir, $current_file,
+		    NEED_AS_NONEMPTY, NO_DIRDEST, undef, "Rename",
+		    undef,
+                    sub { "mv " . ellipsis_path ($file, ($SX-20-4)/2) . " " .
+			  ellipsis_path ($dest, ($SX-20-4)/2) },
+		    sub { 
+			if (-e $dest)
+			{
+			    if (-d $dest)
+			    {
+				$what_got_done = "<ERROR> The name '$basenew' is already used by a directory in '$dir'" ;
+				return 'n';
+			    }
+			    return ok_to_overwrite ("Rename", $file, $dest);
+			}
+			'y'; },
+		    sub { shell_exec ("mv '$file' '$dir/$basenew'", "Renaming...") },
+		    sub {
+			# Patch %H database
+			my $new_file = $dir . $S . $basenew;
+			%{$H{$new_file}} = %{$H{$file}};
+			$H{$new_file}{name} = $basenew;
+			delete $H{$file};
+			delete $H{$H{$new_file}{parent}}{fkids}{$base};
+			$H{$H{$new_file}{parent}}{fkids}{$basenew} = $new_file;
+		    });
+		next;
+	    }
+	    if ($key eq 'v')	# Switch to file view
+	    {
+		if ($TAR_MODE)
+		{
+		    # Extract 1
+		    my $dest = "/tmp/$$.dir";
+		    my $ok = shell_exec ("mkdir -p '$dest'", "");
+		    extract_file ($TAR_MODE, $current_file, $dest);
+		    view_file ($dest . $current_file, basename($TAR_MODE) . ": ". $current_file);
+		    $ok = shell_exec ("rm -rf '$dest'", "Removing temp files...");
+		    next;
+		}
+		else
+		{
+		    if ($current_file =~ /\.tar$|\.tar.gz|\.tgz$/)		    
+		    {
+			$key = 'o';
+			# Fall through; don't NEXT
+		    }
+		    else
+		    {
+			view_file ($current_file, $current_file);
+			next;
+		    }
+		}
+	    }
+	    if ($key eq 'o')	# Open tar.  For now, relog
+	    {
+		if ($current_file =~ /\.tar$|\.tar.gz|\.tgz$/)
+		{
+		    save_modes ();
+		    do
+		    {
+			# Save a copy of the current dir, dir graph and H
+			# for extraction dirdest picker later, 
+			our @TARSAV_GP = @GP;
+			our @TARSAV_G = @G;
+			our ($TARSAV_DGCUR, $TARSAV_DGLOW, $TARSAV_DGHIGH) =
+			    ($DGCUR, $DGLOW, $DGHIGH);
+			our %TARSAV_H = %H;
+			local %H;
+			undef %H;
+			log_from_tar ($current_file, $S);
+			$MODE = 'DG';
+			$TAG_MODE = 'any';
+			$FL_MODE = 'current';
+			$DGCUR = 0;
+			compute_dir_graph ();
+			print FDEB "open tar entering work (-1)\n" if $DEBUG & 1;
+			work (-1);  # Recurse
+			print FDEB "open tar returned from work (-1)\n" if $DEBUG & 1;
+		    };
+		    compute_dir_graph ();
+		    restore_modes();
+		    jump_to_mode ();
+		    print FDEB "open tar done with everthing\n" if $DEBUG & 1;
+		}
+		next;
+	    }
+	    if ($key eq 'a' || $key eq "\ca")	# a or (C-a or ^a)
+	    {
+		# Chmod current file
+		our $chmod;
+		my $fun = $key eq 'a' ? \&single_operation : \&ctrl_operation;
+		$fun->($current_dir, $current_file,
+		    NO_AS, NO_DIRDEST, undef, "Chmod",
+		    sub {
+			chmod_hints ();
+			local $FL_FORMAT = 'long';
+			printatceol (0, $SYHINT2, "From: ".format_file_line($current_file, 1), $SX);
+			$chmod = read_a_line ("Chmod ". ($key eq 'a' ? "'$current_file'" : "tagged files").": ",
+					 "chmod", ['Changing Access Modes with chmod']);
+			printatceol (0, $SYHINT1, "", $SX);
+			printatceol (0, $SYHINT2, "", $SX);
+			return defined $chmod;
+		    },
+                    sub { "chmod $chmod " . ellipsis_path ($file, $SX-20-3) },
+		    sub {1},
+		    sub { shell_exec ("chmod $chmod '$file'", "Chmod...") },
+		    sub { 
+			# Relog this file
+			log_info ($file, $H{$file}{name}, $H{$file}{logged}, 
+				  $H{$file}{parent});
+		    });
+			
+		if ($key eq 'a')
+		{
+		    # Recompute this one file line
+		    $F[$FLCUR] = format_file_line ($current_file);
+		    # Redraw
+		    # printatceol ($SXFL0, $SYFL0+$FLCUR-$FLLOW, $F[$FLCUR], $SXFLD);
+		}
+		else
+		{
+		    compute_file_list ($current_dir);
+		}
+		next;
+	    }
+	    if ($key eq 'e')
+	    {
+		# Edit file or Extract
+		if ($TAR_MODE)
+		{
+		    # Extract
+		    unzip_files (1, $FP[$FLCUR]);
+		}
+		else
+		{
+		    # Edit
+		    edit ($current_file);
+		    jump_to_mode ();
+		}
+		next;
+	    }
+	    if ($key eq "\cz")	# C-z ^z
+	    {
+		# Zip up into tar archive
+
+		# Create scratch list with only visible tagged files.
+		my @scratch = grep { $H{$_}{tag} } @FP;
+		zip_up_files ($current_dir, 1, @scratch);
+		next;
+	    }
+	    if ($key eq 'S')
+	    {
+		# Search files
+
+		# Prompt for search string
+		my $match_case = 0;
+		my $polarity = 1;
+		my $type = "Regular Expression";
+		my $type_flags = "";
+		FLsearch_hints ($match_case, $polarity, $type);
+		my $tofind = read_a_line ("Search tagged files for: ",
+					  'SEARCH', , ['Searching File Lists'],"",
+		    sub 
+		    {
+			my $key = shift;
+			if ($key eq $KEY_F2) # F2
+			{
+			    $match_case = !$match_case;
+			    FLsearch_hints ($match_case, $polarity, $type);
+			    return 1; # we handled key
+			}
+			if ($key eq $KEY_F3) # F3
+			{
+			    $polarity = -$polarity;
+			    FLsearch_hints ($match_case, $polarity, $type);
+			    return 1;
+			}
+			if ($key eq $KEY_F4) # F4
+			{
+			    if ($type eq "Regular Expression")
+			    {
+				$type = "Extended Regular Expression";
+				$type_flags = "-E";
+			    }
+			    elsif ($type eq "Extended Regular Expression")
+			    {
+				$type = "Perl Regular Expression";
+				$type_flags = "-P";
+			    }
+			    else
+			    {
+				$type = "Regular Expression";
+			    	$type_flags = "";
+			    }
+			    FLsearch_hints ($match_case, $polarity, $type);
+			    return 1;
+			}
+			# No key handled
+			0;
+		    });
+		disp_message ("<ABORTED>"), goto again unless defined $tofind;
+
+		# Create list first
+		my $file = "/tmp/$$.grep";
+		unless (open (FOUT, ">$file"))
+		{
+		    disp_message ("Error attempting to write to '$file'");
+		    next;
+		}
+		for (@FP)
+		{
+		    next unless $H{$_}{tag};
+		    print FOUT $_, "\n";
+		    $H{$_}{tag} = $polarity > 0 ? undef : 1;
+		}
+		close FOUT;
+
+		# Create tofind as a file
+		my $tofindfile = "/tmp/$$.tofind";
+		unless (open (FOUT, ">$tofindfile"))
+		{
+		    disp_message ("Error attempting to write to '$tofindfile'");
+		    next;
+		}
+		print FOUT $tofind, "\n";
+		close FOUT;
+
+		# Shell out to grep
+		my $case_flags = $match_case ? "" : "-i";
+		my $FIN;
+		unless (open ($FIN, "cat '$file' | xargs grep -l $case_flags $type_flags -f '$tofindfile' 2> /dev/null |"))
+		{
+		    disp_message ("Error attempting to exec grep");
+		    next;
+		}
+		# Read data and set tags
+		while (<$FIN>)
+		{
+		    chomp;
+		    $H{$_}{tag} = $polarity > 0 ? 1 : undef;
+		}
+		close $FIN;
+		# unlink $file;
+		# unlink $tofindfile;
+
+		set_fv_search ($tofind, $type eq 'Plain Text');
+
+		# Refresh
+		compute_file_list ($current_dir);
+		FLreframe (VALID_ALL, REF_CEN);
+		next;
+	    }
+	    if ($key eq "\ce" && $TAR_MODE) # C-e ^e
+	    {
+		# Extract some files from tar
+
+		# Create scratch list with only visible tagged files.
+		my @scratch = grep { $H{$_}{tag} } @FP;
+		unzip_files (2, @scratch);
+
+		# Now, pop out of view (and escape from tar)
+		# PROBLEMS???
+		restore_modes (1);
+
+		# Because unzip_files did a log, recompute dir graph
+		$current_dir = $GP[$DGCUR];
+		$current_file = @FP ? $FP[$FLCUR] : undef;
+		compute_dir_graph ();
+		compute_file_list ($current_dir);
+
+		# And because we are inside a work() called from opening the tar
+		# Just leave as if ESC was pressed
+		print FDEB "^E is now faking an 'ESC' to return to work() inside open tar\n" if $DEBUG & 1;
+		$key = "\x1b";
+		print FDEB "+++ ^E mapping key to ESC to quit inside tar: key='$key' RIQ=$RETURN_IS_QUIT\n" if $DEBUG & 1;
+		last;
+	    }
+ 	}
+	if ($MODE eq 'LV' || $MODE eq 'FV')
+	{
+	    if ($key eq 'b')
+	    {
+		if ($FV_MODE eq 'ascii')
+		{
+		    $FV_MODE = 'binary';
+		    compute_file_view ($current_file);
+		    FVredraw ();
+		}
+		redo;
+	    }
+	    if ($key eq 'a')
+	    {
+		if ($FV_MODE eq 'binary')
+		{
+		    $FV_MODE = 'ascii';
+		    compute_file_view ($current_file);
+		    FVredraw ();
+		}
+		redo;
+	    }
+	}
+	elsif ($MODE eq 'DG')
+	{
+	    #
+	    # DIRECTORY GRAPH
+	    #
+	    if ($key =~ /^[tu]/)   # Tag / Untag
+	    {
+		unhighlight_cursor ();
+
+		# Tag/untag all visible files
+		$H{$_}{tag} = $key eq 't' for (@FP);
+
+		compute_file_list ($current_dir);
+		$key = $KEY_DOWN;
+		goto dg_down;
+	    }
+	    if ($key eq $KEY_LEFT) # Left arraow
+	    {
+key_left:
+		unhighlight_cursor ();
+
+		# Move cursor to parent
+		my $target = $H{$GP[$DGCUR]}{parent};
+		my $dgcur = $DGCUR;
+		$DGCUR = -1;
+		for (0..$#GP)
+		{
+		    $DGCUR = $_, last if $target eq $GP[$_];
+		}
+		dump_log_data (1) unless $DGCUR+1;
+		confess "dgcur=$dgcur GP[..]=$GP[$dgcur] target=$target DGCUR=$DGCUR" unless $DGCUR+1;
+
+		DGreframe(VALID_LOW_HIGH, REF_CEN);
+		next;
+	    }
+	    if ($key eq $KEY_UP || $key eq $KEY_DOWN) # Up arrow, down arrow 
+	    {
+		unhighlight_cursor ();
+
+		# Move cursor
+dg_down:
+		$DGCUR-- if ($key eq $KEY_UP);
+		$DGCUR++ if ($key eq $KEY_DOWN);
+		$DGCUR = 0 if $DGCUR < 0;
+		$DGCUR = $#G if $DGCUR > $#G;
+
+		# Redraw 
+		DGreframe (VALID_LOW_HIGH, $key eq $KEY_DOWN ? REF_HIGH : REF_LOW);
+		next;
+	    }
+	    if ($key eq $KEY_PGUP || $key eq $KEY_PGDN) # Page up, Page down
+	    {
+		# Compute current cursor position
+		my $cury = $DGCUR - $DGLOW;
+
+		unhighlight_cursor ();
+
+		if ($key eq $KEY_PGUP)
+		{
+		    # Up a page. First to top of page, then up a page
+		    if ($cury == 0)
+		    {
+			$DGCUR-= $SYDGD;
+			$DGCUR = 0 if $DGCUR < 0;
+		    }
+		    else
+		    {
+			$DGCUR = $DGLOW;
+		    }
+		    DGreframe (VALID_LOW_HIGH, REF_LOW);
+		}
+		else
+		{
+		    # Down a page.  First to bottom, then down a page
+		    if ($cury == $SYDGD-1)
+		    {
+			$DGCUR+= $SYDGD;
+			$DGCUR = $#G if $DGCUR > $#G;
+		    }
+		    else
+		    {
+			$DGCUR = $DGHIGH;
+		    }
+		    DGreframe (VALID_LOW_HIGH, REF_HIGH);
+		}
+		next;
+	    }
+	    if ($key eq $KEY_HOME || $key eq $KEY_END) # Home, End
+	    {
+		unhighlight_cursor ();
+		$DGCUR = $key eq $KEY_HOME ? 0 : $#G;
+		DGreframe (VALID_LOW_HIGH, $key eq $KEY_HOME ? REF_LOW : REF_HIGH);
+		next;
+	    }
+	    if ($key =~ /^[np]$/)
+	    {
+		# Move to next/prev on same level
+		my $dir = $key eq 'n' ? 1 : -1;
+		my $level = get_level ($current_dir);
+		my $dgcur = $DGCUR;
+same_level:		
+		$dgcur += $dir;
+		redo if $dgcur < 0 || $dgcur > $#G;
+		goto same_level if get_level ($GP[$dgcur]) > $level;
+		redo if get_level ($GP[$dgcur]) < $level;
+		unhighlight_cursor ();
+		$DGCUR = $dgcur;
+		DGreframe (VALID_LOW_HIGH, $dir > 0 ? REF_HIGH : REF_LOW);
+		next;
+	    }
+	    if ($key =~ /[-+*\/]/ || $key eq $KEY_KSTAR || $key eq $KEY_KPLUS ||
+    			$key eq $KEY_KMINUS || $key eq $KEY_KDIVIDE)
+	    {
+		# unlog from here down
+		if ($key eq '-' || $key eq $KEY_KMINUS ||
+		       $key eq '/' || $key eq $KEY_KDIVIDE)
+		{
+    		    confess unless $H{$current_dir}{isdir};  # Sanity check
+		    my $logged = $H{$current_dir}{logged};
+		    if (($key eq '-' || $key eq $KEY_KMINUS) &&
+			$logged==0 && $logged ne LOG_PLACEHOLDER && $current_dir ne $S)
+		    {
+			# Unlog and then erase directory from parent 
+			confess unless $DGCUR; # Sanity: since ne $S, must be != 0
+			$DGCUR = $DGCUR < $#G ? $DGCUR + 1 : $DGCUR - 1;
+			unlog_dir ($current_dir, 1); 
+			$current_dir = $GP[$DGCUR];
+		    }
+		    else
+		    {
+			# Innovation: / unlogs siblings
+			if ($key eq '/' || $key eq $KEY_KDIVIDE)
+			{
+			    unlog_dir ($H{$current_dir}{parent}, 0); 
+			    print FDEB "/ is relogging $current_dir with logged=$logged\n";
+			    log_dir ($current_dir, $logged);
+			}
+			else
+			{
+			    # Unlog, but don't erase current dir
+			    unlog_dir ($current_dir, 0); 
+			}
+		    }
+		}
+		else
+		{
+		    if ($TAR_MODE)
+		    {
+			# Only relog some of tar
+			log_from_tar ($TAR_MODE, $current_dir);
+		    }
+		    else
+		    {
+			log_dir ($current_dir, 
+				 ($key eq '*' || $key eq $KEY_KSTAR) ? -1 :
+				 $H{$current_dir}{logged}+1);
+		    }
+		}
+		$DGCUR = compute_dir_graph ($current_dir);
+		compute_file_list ($current_dir);
+		DGreframe (VALID_LOW_CUR, REF_HIGH);
+		next;
+	    }
+	    if (($key eq "\r" || $key eq $KEY_KENTER) && $RETURN_IS_QUIT <= 0)
+	    {
+		print FDEB "+++ Return mapped to 'k': key='$key' RIQ=$RETURN_IS_QUIT\n" if $DEBUG & 1;
+
+		# Enter in DG mode is switch to current view mode
+		$key = 'k';
+		# Fall through
+	    }
+	    if ($key eq 'G')
+	    {
+		# Change DG_MODE
+		unhighlight_cursor ();
+		### $DG_MODE = $DG_MODE eq 'occupied' ? 'logged' : 'occupied';
+		# $DG_FORMAT = $DG_FORMAT eq 'both' ? 'graph' : 'both';
+		$DG_FORMAT = $DG_FORMAT eq 'both' ? 'graph' : 
+			     $DG_FORMAT eq 'graph' ? 'stats' :
+			     $DG_FORMAT eq 'stats' ? 'long' :
+						     'both';
+		$DGCUR = compute_dir_graph ($current_dir);
+		# compute_file_list ($current_dir);
+		reframe (VALID_NAUGHT, REF_CEN);
+		# $current_dir will change automatically with "goto again"
+		next;
+	    }
+	    if ($key eq 'r')
+	    {
+		# Rename current directory
+		single_operation ($current_dir, $current_dir,
+		    NEED_AS_NONEMPTY, NO_DIRDEST, ['Directory Rename'], "Rename",
+		    undef,
+                    sub { "mv " . ellipsis_path ($file, ($SX-20-4)/2) . " " .
+			  ellipsis_path ($dest, ($SX-20-4)/2) },
+		    sub { 
+			if (-e $dest)
+			{
+			    if (-d $dest)
+			    {
+				$what_got_done = "<ERROR> The name '$basenew' is already used by a directory in '$dir'" ;
+				return 'n';
+			    }
+			    return ok_to_overwrite ("Rename", $file, $dest);
+			}
+			'y'; },
+		    sub { shell_exec ("mv '$file' '$dir/$basenew'", "Renaming...") },
+		    sub {
+			my $old_dir = $file;
+			my $new_dir = $dir . $S . $basenew;
+
+			# Remove $old_dir in %H database
+			my $logged = $H{$old_dir}{logged};
+			unlog_dir ($old_dir, 1);
+			# %{$H{$new_file}} = %{$H{$file}};
+			# $H{$new_file}{name} = $basenew;
+			# delete $H{$file};
+			# delete $H{$H{$new_file}{parent}}{dkids}{$base};
+			# $H{$H{$new_file}{parent}}{dkids}{$basenew} = $new_file;
+
+			# Add newdir
+			# Unfortunately, all files below $new_file will have wrong path now.
+			# Relogging is quickest (engineering effort, not machine effort)
+			# way to rebuild database
+			log_dir ($new_dir, $logged);
+
+			# Change current_dir so operation_refresh doesn't relog old dir
+			$current_dir = $new_dir;
+		    });
+		next;
+	    }
+	    if ($key eq "\x1bg")	# M-g
+	    {
+		# Move (graft) current directory tree
+		single_operation ($current_dir, $current_dir,
+		    NO_AS, NEED_DIRDEST, ['Grafting Directories'], "Graft",
+		    undef,
+                    sub { "mv " . ellipsis_path ($file, ($SX-20-4)/2) . " " .
+			  ellipsis_path ($dest, ($SX-20-4)/2) },
+		    sub { -e $dest ? 
+			ok_to_overwrite ("Graft", $file, $dest) : 'y' },
+		    sub { shell_exec ("mv '$file' '$dest'", "Grafting...") },
+		    sub {
+			# At this point: file=old directory = current_dir
+			my $old_dir = $file;
+			my $old_par = $H{$old_dir}{parent};
+			confess unless $H{$old_dir}{isdir};
+			my $size = $H{$old_dir}{familysize};
+
+			# Remove $old_dir in %H database
+			my $logged = $H{$old_dir}{logged};
+			unlog_dir ($old_dir, 1);
+
+			# Add newdir
+			my $new_dir = $dirdest . $S . $basenew;
+			log_dir ($new_dir, $logged);
+
+			# Fixup family size
+			my $new_par = $H{$new_dir}{parent};
+			# print FDEB "alt-g old_par=$old_par new_par=$new_par\n" if $DEBUG & 1;
+			recompute_family_size_path ($old_par, -$size);
+			recompute_family_size_path ($new_par, $size);
+
+			# Change current_dir so operation_refresh doesn't relog old dir
+			$current_dir = $new_dir;
+		    });
+		next;
+	    }
+	    if ($key eq 'm')
+	    {
+		# Make a directory
+		my $what_got_done = "Nothing done";
+		hintatceol (0, $SYHINT0, "[F1] Help  [Up/Down] History  [Enter] Ok  [Esc] Abort", $SX);
+		hintatceol (0, $SYHINT1, "", $SX);
+		hintatceol (0, $SYHINT2, "", $SX);
+		my $new_dir = read_a_line_with_tab ($current_dir, "Enter new directory name: ",
+					  "MKDIR", ['Making Directories']);
+		if (defined $new_dir)
+		{
+		    $x = shell_exec ("mkdir '$current_dir/$new_dir'", "");
+		    $what_got_done = $x;  # Blank=ok. Err msg otherwise
+		    unless ($x)
+		    {
+			log_dir ("$current_dir/$new_dir", -1);
+			recompute_family_size_path ($current_dir, 
+						    $H{$current_dir . $S . $new_dir}{size});
+		    }
+		}
+		disp_message ($what_got_done);
+		compute_dir_graph ();
+		compute_file_list ($current_dir);
+		DGreframe (VALID_LOW_CUR, REF_HIGH);
+		next;
+	    }
+	    if ($key eq 'd')
+	    {
+		# delete current directory
+		my $what_got_done = "Nothing done";
+		my $ok = read_a_key (0, $SYMSG, 
+			"Confirm: Delete '" . ellipsis_path ($current_dir, $SX-30) .
+    				"' [yn] ", "yn\x1b", ['Deleting Directories']);
+		if ($ok =~ /^y/i)
+		{
+		    $x = shell_exec ("rmdir '$current_dir'", "");
+		    $what_got_done = $x;  # Blank=ok. Err msg otherwise
+		    unless ($x)
+		    {
+			# Success...  Must have been empty
+			# Remove from %H
+			my $name = $H{$current_dir}{name};
+			my $parent = $H{$current_dir}{parent};
+			
+			confess unless defined $H{$current_dir};
+			delete $H{$current_dir};
+			# Remove from parent's dkids
+			confess unless defined $H{$parent}{dkids}{$name};
+			delete $H{$parent}{dkids}{$name};
+			$what_got_done = "Deleted '$current_dir'";
+
+			$DGCUR = compute_dir_graph ($GP[$DGCUR-1]);
+			compute_file_list ($GP[$DGCUR]);
+			DGreframe (VALID_LOW_CUR, REF_CEN);
+		    }
+		}
+		disp_message ($what_got_done);
+		next;
+	    }
+	    if ($key eq "\x1bp")	# M-p
+	    {
+		# prune: delete current directory and all below it
+		my $what_got_done = "Nothing done";
+		my $ok = read_a_key (0, $SYMSG, 
+			"Confirm: Prune '" . ellipsis_path ($current_dir, $SX-40) .
+    			"' and subdirs [yn] ", "yn\x1b", ['Pruning Directories']);
+
+		if ($ok =~ /^y/i)
+		{
+		    my $cmd;
+		    my $del_dir = read_a_key (0, $SYMSG, 
+			"Remove '$current_dir' as well [y] or leave it [n] ", "yn\x1b",
+					      ['Pruning Directories']);
+		    disp_message ($what_got_done), redo unless $del_dir ne "\x1b";
+		    my $del_dir = $del_dir =~ /^y/i;
+
+		    disp_message ("Pruning...");
+		    if ($del_dir)
+		    {
+			# Remove dir also
+			$cmd = "rm -rf '$current_dir'";
+		    }
+		    else
+		    {
+			# Leave dir
+			confess "current_dir empty!!!" unless $current_dir;
+			$cmd = "rm -rf '$current_dir'/* '$current_dir'/.[^.]*";
+		    }
+
+		    $x = shell_exec ($cmd, "Pruning...");
+		    $what_got_done = $x;  # Blank=ok. Err msg otherwise
+		    unless ($x)
+		    {
+			# Success...  Must have been empty
+			# Remove from %H
+			disp_message ("Directory pruned... cleaning up...");
+			unlog_dir ($current_dir, $del_dir);
+			$what_got_done = $del_dir ? 
+			    "Pruned and deleted '$current_dir'" :
+			    "Pruned under '$current_dir'";
+
+			unless ($del_dir)
+			{
+			    # Didn't remove, but it is empty now.
+			    # So mark it as logged, rather than unlogged
+			    ### $H{$current_dir}{logged} = 1;
+			    # Do this by logging it and we get family size right too
+			    log_dir ($current_dir, 1);
+			}
+
+			$DGCUR = compute_dir_graph ($GP[$del_dir ? $DGCUR-1 : $DGCUR]);
+			compute_file_list ($GP[$DGCUR]);
+			DGreframe (VALID_LOW_CUR, REF_CEN);
+		    }
+		}
+		disp_message ($what_got_done);
+		next;
+	    }
+	    if ($key eq "\x1bc")	# M-c
+	    {
+		# Copy with dir structure
+		our ($src, $dest, $chdir, $showdest, $copy_mode, $tagged_mode);
+		single_operation ($current_dir, $current_dir,
+		    NO_AS, NEED_DIRDEST, ['Copying Directories'], "Copy branch",
+		    sub { # subprompt
+			# copy_mode 0=abs, 1=include curdir, 2=remove curdir
+			# given /a/b/c/d: copy /a/b/c as cc to /usr
+			#    0: /usr/a/b/cc/d
+			#    1: /usr/cc/d
+			#    2: /usr/d
+			$copy_mode = 1;
+			# tagged_code: 0=all files, 1=only tagged files (forces copy_mode=2?)
+			$tagged_mode = 1;
+
+			if ($dirdest)
+			{
+MCagain:
+			    if ($copy_mode == 0)
+			    {
+				$src = $current_dir;
+				($src =~ s:^/::) || confess;
+				$showdest = $dirdest . $current_dir;
+				$chdir = $S;
+			    }
+			    elsif ($copy_mode == 1)
+			    {
+				$src = $H{$current_dir}{name};
+				$showdest = $dirdest . $S . $H{$current_dir}{name};
+				$chdir = $H{$current_dir}{parent};
+			    }
+			    else
+			    {
+				$showdest = $dirdest;
+				$chdir = $current_dir;
+			    }
+			    my $w = ($SX-61)/2;
+			    printatceol (0, $SYHINT1, ($tagged_mode ? "Copy tagged in branch '" : "Copy whole branch '").
+					ellipsis_path($current_dir, $SX-30)."/*'", $SX);
+			    printatceol (0, $SYHINT2, ($tagged_mode ? "                   to '" : "               to '").
+					ellipsis_path($showdest, $SX-30)."/*'", $SX);
+			    my $ok = read_a_key (0, $SYMSG, 
+					 "Press [p] to change placement, [t] to toggle tagged files, [Enter] to accept: ", 
+					 "pt\r\x1b", ['Copying Directories']);
+			    if ($ok =~ /^p/i)
+			    {
+				$copy_mode = (1+$copy_mode)%3;
+			    }
+			    if ($ok =~ /^t/i)
+			    {
+				$tagged_mode = (1+$tagged_mode)%2;
+			    }
+			    goto MCagain unless $ok eq "\x1b" || $ok eq "\r" || $ok eq $KEY_KENTER;
+			    $dirdest = undef if $ok eq "\x1b";
+			}
+			return defined $dirdest
+                    },
+		    sub { # subconfirm
+			my $w = ($SX-50)/2;
+			"Copy branch '".ellipsis_path($current_dir, $w).
+		         "/*' to '".ellipsis_path($showdest, $w)."/*'"
+		    },
+		    sub { # subcheck 
+			'y';
+		    },
+		    sub { # subop
+			print FDEB "alt-copy copy_mode=$copy_mode tm=$tagged_mode cd=$current_dir d=$dest\n" if $DEBUG & 1;
+			alt_copy ($current_dir, $src, $dirdest, $chdir, $copy_mode==2 || $tagged_mode, $tagged_mode);
+		    },
+		    sub { # subsuccess
+			log_dir ($showdest, -1);
+			recompute_family_size_path ($H{$showdest}{parent}, $H{$showdest}{familysize});
+			$what_got_done = "Copied Branch '$current_dir'";
+
+			compute_dir_graph ();
+			compute_file_list ($current_dir);
+			DGreframe (VALID_LOW_CUR, REF_LOW);
+		    });
+		next;
+
+	    }
+	    if ($key eq "\x1bz")	# M-z
+	    {
+		# Zip up into tar archive
+
+		# Create scratch list with current directory
+		my @scratch = ($current_dir);
+		zip_up_files ($current_dir, 0, @scratch);
+		next;
+	    }
+	    if ($key eq '@')
+	    {
+		# Integrity check on fully logged branch from current_dir
+		# Dump current (old)
+		close FDEB if $DEBUG;
+		open (FDEB, ">/tmp/H0") || confess;
+		dump_log_data (1);
+		close FDEB;
+		# Save old
+		my %H0 = %H;
+		# Relog
+		log_dir ($current_dir, -1);
+		# Dump new
+		open (FDEB, ">/tmp/H1") || confess;
+		dump_log_data (1);
+		close FDEB;
+		open FDEB, ">>/tmp/debug" if $DEBUG;
+		$x = shell_exec_all ("diff /tmp/H0 /tmp/H1 | grep -v stat", "Diffing...");
+		shell_exec_system ("ediff /tmp/H0 /tmp/H1", "Ediffing..."), jump_to_mode() if $x;
+		next;
+	    }
+	    elsif ($key eq 'P')
+	    {
+		# Print directory list
+		my $file = read_a_line_with_tab ($current_dir, 
+    				"Print list of logged directories.  Enter filename: ", 
+				"PRINT", ['Saving Directory Lists']);
+		redo unless defined $file;
+		$file = $START_DIR . $S . $file unless $file =~ m:^/:;
+		unless (open (FOUT, ">$file"))
+		{
+		    disp_message ("Error attempting to write to '$file'");
+		}
+		else
+		{
+		    for (@GP)
+		    {
+			print FOUT $_, "\n";
+		    }
+		    close FOUT;
+		    disp_message ("Wrote file list to $file'");
+		}
+		redo;
+	    }
+	    if ($key eq "\x1bk")	# M-k
+	    {
+		# dir diff
+		my $what_got_done = "Nothing done";
+
+		my $d1 = $current_dir;
+
+		hintatceol (0, $SYHINT0, "[F1] Help  [F2] Pick  [Up/Down] History  [Enter] Ok  [Esc] Abort", $SX);
+		printatceol (0, $SYHINT1, "", $SX);
+		printatceol (0, $SYHINT2, sprintf ("Compare directory '%s' with another directory", $d1), $SX);
+		my $d2 = get_dir_dest(undef,  "Enter directory: ", "dir_diffs", ['Diffing Directories']);
+		if ($d2 && $d2 ne $d1)
+		{
+		    dir_diffs ($d1, $d2);
+		}
+		next;
+	    }
+	    if ($key eq 'a')	# a 
+	    {
+		# Chmod current directory
+		our $chmod;
+		single_operation ($current_dir, $current_dir, 
+		    NO_AS, NO_DIRDEST, ['Changing Access Mode of a Directory'], "Chmod",
+		    sub {
+			chmod_hints ();
+			local $FL_FORMAT = 'long';
+			printatceol (0, $SYHINT2, "From: ".format_file_line($current_dir, 1), $SX);
+			$chmod = read_a_line ("Chmod '$current_dir': ",
+					 "chmod", ['Changing Access Mode of a Directory']);
+			printatceol (0, $SYHINT1, "", $SX);
+			printatceol (0, $SYHINT2, "", $SX);
+			return defined $chmod;
+		    },
+                    sub { "chmod $chmod " . ellipsis_path ($file, $SX-20-3) },
+		    sub { 'y' },
+		    sub { shell_exec ("chmod $chmod '$file'", "Chmod...") },
+		    sub { 
+			# Relog this directory?
+			my $logged = $H{$file}{logged};
+			unlog_dir ($file, 1);
+			log_dir ($file, $logged);
+
+			# Recompute changes to dir graph
+			compute_dir_graph ();
+			compute_file_list ($current_dir);
+
+			# Redraw
+			DGreframe (VALID_LOW_CUR, REF_CEN);
+		    });
+		next;
+	    }
+	}
+
+	# Keys valid in any mode
+
+	if ($key eq '~')
+	{
+	    recompute_family_size ($S);
+	    disp_message ("Recomputed familysize");
+	    next;
+	}
+	elsif ($key eq $KEY_F1 || $key eq '?')
+	{
+	    my @topics = ('Help Viewer', 'Keys Summary', 'Major Modes', 'Major Displays', 'Index', 'The XYZ Project'); 
+	    unshift @topics, ('File List Display', 'File List and List View Mode Operations',
+			      'File List Submodes', 'Searching File Lists') if $MODE eq 'FL';
+	    unshift @topics, ('File View Display', 'Searching File Views') if $MODE eq 'FV';
+	    unshift @topics, ('Dir Graph Display', 'Dir Graph Mode Operations', 'Dir Graph Submodes') if $MODE eq 'DG';
+	    unshift @topics, ('List View Display', 'File List and List View Mode Operations') if $MODE eq 'LV';
+	    help_picker (1, @topics);
+	    next;
+	}
+	elsif ($key eq '.')
+	{
+	    dump_log_data ();
+	    redo;
+	}
+	elsif ($key eq '`')
+	{
+	    disp_message ("press a key...");
+another:
+	    $key = read_whole_key ();
+	    disp_message (sprintf ("Keys are: %s.  Press another key or [Esc]", 
+		join ('', map { (0 || $_ lt ' ' || $_ gt "\x7e") ? 
+				    sprintf ("<%02x>", ord) : $_ }
+		      split //, $key)));
+	    goto another unless $key eq "\x1b";
+	    redo
+	}
+	elsif ($key =~ /^[skbg]$/)
+	{
+	    # Change MODE and H_MODE
+	    print FDEB "Change MODE and H_MODE\n" if $DEBUG & 4;
+	    if ($key eq 'k' && $H{$current_dir}{logged}==0 && $H{$current_dir}{logged} ne LOG_TOUCHED)
+	    {
+		# Autolog if doing k with unlogged dir
+		log_dir ($current_dir, 1);
+		$DGCUR = compute_dir_graph ($current_dir);
+	    }
+	    if ($key eq 'g' && $FL_MODE eq 'showall')
+	    {
+		$DGCUR = find_dir_in_gp ($H{$current_file}{parent});
+		confess "Could not find parent ($H{$current_file}{parent}) $of $current_file in @GP"
+		    if $DGCUR < 0;
+	    }
+	    save_modes ();
+	    $MODE = $key =~ /[skb]/ ? 'FL' : 'DG';
+	    $TAG_MODE = 'any';
+	    $FL_MODE = $key eq 's' ? 'showall' :
+		       $key eq 'b' ? 'branch' : 'current';
+	    compute_dir_graph () if $key eq 'g';
+	    work (1);	# Recurse
+	    restore_modes ();
+	    jump_to_mode ();
+	    next;
+	}
+	elsif ($key =~ /^[\cs\ck\cb\cg]$/)
+	{
+	    # Change MODE and H_MODE
+	    print FDEB "Change MODE and H_MODE\n" if $DEBUG & 4;
+	    save_modes ();
+	    $MODE = $key =~ /[\cs\ck\cb]/ ? 'FL' : 'DG';
+	    $TAG_MODE = 'tag';
+	    $FL_MODE = $key eq "\cs" ? 'showall' :
+		       $key eq "\cb" ? 'branch' : 'current';
+	    compute_dir_graph () if $key eq "\cg";
+	    work (1);	# Recurse
+	    restore_modes ();
+	    jump_to_mode ();
+	    next;
+	}
+	elsif ($key eq 'V' || $key eq $KEY_F7) # F7
+	{
+	    save_modes ();
+	    $MODE = 'LV';
+	    $FL_FORMAT = 'name';
+	    
+	    work (1);	# Recurse
+	    restore_modes ();
+	    jump_to_mode ();
+	    next;
+	}
+	elsif ($key eq "\x1bs")
+	{
+	    # Sort
+	    unhighlight_cursor ();
+resortkey:	   
+	    disp_message (sprintf "Sort (%s %s) by [N]ame, [E]xtension, [D]ate or [S]ize:", 
+		$ORDER ? "decending" : "ascending",
+		$CASE ? "with case" : "ignoring case");
+	    $key = read_whole_key ();
+	    if ($key eq 'o')
+	    {
+		$ORDER = !$ORDER;
+		goto resortkey;
+	    }
+	    if ($key eq 'c')
+	    {
+		$CASE = !$CASE;
+		goto resortkey;
+	    }
+	    $SORTBY = \&sort_by_date if $key eq 'd';
+	    $SORTBY = \&sort_by_ext  if $key eq 'e';
+	    $SORTBY = \&sort_by_name if $key eq 'n';
+	    $SORTBY = \&sort_by_size if $key eq 's';
+	    compute_file_list ($current_dir);
+	    $FLCUR = find_file_in_fp ($current_file);
+	    reframe0 ();
+	    next;
+	}
+	elsif ($key eq 'P')
+	{
+	    # Print file list
+	    my $file = read_a_line_with_tab ($current_dir, 
+				"Print list of files.  Enter filename: ",
+				"PRINT", ['Saving File Lists']);
+	    redo unless defined $file;
+	    $file = $START_DIR . $S . $file unless $file =~ m:^/:;
+	    unless (open (FOUT, ">$file"))
+	    {
+		disp_message ("Error attempting to write to '$file'");
+	    }
+	    else
+	    {
+		for (@FP)
+		{
+		    print FOUT $_, "\n";
+		}
+		close FOUT;
+		disp_message ("Wrote file list to $file'");
+	    }
+	    next;
+	}
+	elsif ($key eq "\cf") # ^f
+	{
+	    # Filter with RE
+	    my $filt = read_a_line (
+		  "Enter Filter as /RE/ or expression (currently '$FILTER'): ",
+			"FILTER-RE", 
+			 ['File Filters with Regular Expressions', 'File Filters']);
+	    redo unless defined $filt;
+
+	    # Change filter into GLOB
+	    $FILTER = $filt;
+	    $FILTER_GLOB = "<expression>";
+
+	    # Recompile &sub_file_filter
+	    *sub_file_filter = eval ('sub { (local $_) = @_; ' . $FILTER . ' }');
+
+	    goto set_filter;
+	}
+	elsif ($key eq 'f')
+	{
+	    # Filter
+	    my $filt = read_a_line ("Enter Filter as Glob: ", 
+					"FILTER-GLOB",
+			 ['File Filters with Globs', 'File Filters']);
+	    redo unless defined $filt;
+
+	    # Change filter into RE
+	    $FILTER_GLOB = $filt;
+	    $FILTER = compute_filter_from_glob ($FILTER_GLOB);
+
+set_filter:
+	    disp_message (sprintf "Filter now Glob='%s' RE='%s'",
+			  $FILTER_GLOB, $FILTER);
+	    # Instead of this:
+	    # compute_file_list ($current_dir);
+	    # do this:
+	    $DGCUR = compute_dir_graph ($current_dir);
+	    compute_file_list ($current_dir);
+	    $FLCUR = find_file_in_fp ($current_file);
+	    FLreboundCUR ();
+	    $current_file = $FP[$FLCUR];
+	    if ($MODE eq 'FV' || $MODE eq 'LV')
+	    {
+		$FV_MODE = deduce_file_view_mode ($current_file);
+		compute_file_view ($current_file);
+	    }
+	    reframe0 ();
+	    next;
+	}
+	elsif ($key eq 'D')
+	{
+#	    # Dir Filter
+#	    my $filt = read_a_line ("Enter Directory Graph Filter as /RE/: ",
+#				       "DIR-FILTER-RE", ['No help so far', 'File Filters']);
+#	    redo unless defined $filt;
+#	    $DIR_FILTER = $filt;
+#	    *sub_dir_filter = eval ('sub { (local $_) = @_; ' . $DIR_FILTER . ' }');
+#
+#	    $DGCUR = compute_dir_graph ($current_dir);
+#	    compute_file_list ($current_dir);
+#	    $FLCUR = find_file_in_fp ($current_file);
+#	    reframe0 ();
+	    dump_dir_stats ();
+	    next;
+	}
+	elsif ($key eq 'S')
+	{
+	    # Dir Sort
+	    unhighlight_cursor ();
+resortkeyD:	   
+	    disp_message (sprintf "Sort Dirs (%s %s) by [N]ame [P]ath [B] Family bytes [H] Child bytes [D]irs [F]iles: ", 
+		$ORDER_DIR ? "decending" : "ascending",
+		$CASE_DIR ? "with case" : "ignoring case");
+	    $key = read_whole_key ();
+	    if ($key eq 'o')
+	    {
+		$ORDER_DIR = !$ORDER_DIR;
+		goto resortkeyD;
+	    }
+	    if ($key eq 'c')
+	    {
+		$CASE_DIR = !$CASE_DIR;
+		goto resortkeyD;
+	    }
+	    $SORTBY_DIR = \&sort_dir_by_path if $key eq 'p';
+ 	    $SORTBY_DIR = \&sort_dir_by_name if $key eq 'n';
+ 	    $SORTBY_DIR = \&sort_dir_by_family_bytes if $key eq 'b';
+ 	    $SORTBY_DIR = \&sort_dir_by_child_bytes if $key eq 'h';
+ 	    $SORTBY_DIR = \&sort_dir_by_dirs if $key eq 'd';
+ 	    $SORTBY_DIR = \&sort_dir_by_files if $key eq 'f';
+ 	    $DGCUR = compute_dir_graph ($current_dir);
+	    reframe0 ();
+	    next;
+	}
+	elsif ($key eq 'l')
+	{
+	    # Log a new path
+	    unhighlight_cursor ();
+	    my $path = read_a_line_with_tab ($current_dir, "Log path: ", 
+					     "LOG", ['Logging Directories']);
+	    redo unless defined $path;
+
+	    if ($TAR_MODE)
+	    {
+		$path = make_path_absolute ($path, $S);
+		log_from_tar ($TAR_MODE, $path);
+	    }
+	    else
+	    {
+		$path = make_path_absolute ($path, $current_dir);
+		if (-e $path)
+		{
+		    log_dir ($path, 1);
+		}
+		else
+		{
+		    disp_message ("No such directory: '$path'");
+		    next;
+		}
+	    }
+	    $DGCUR = compute_dir_graph ($path);
+	    reframe0 ();
+	    # $current_dir will change automatically next
+	    next;
+	}
+	elsif ($key eq 'L')
+	{
+	    # Link mode
+	    unhighlight_cursor ();
+	    $LINK_FORMAT = $LINK_FORMAT eq 'follow' ? 'point' : $LINK_FORMAT eq 'point' ? 'resolved' : 'follow';
+	    $DGCUR = compute_dir_graph ($current_dir);
+	    compute_file_list ($current_dir);
+	    reframe (VALID_ALL, REF_CEN);
+	    # $current_dir will change automatically next
+	    next;
+	}
+	elsif ($key eq "\x1bf" || $key eq 'F')	 # M-f
+	{
+	    # Bail on LV mode
+	    next if $MODE eq 'LV';
+
+	    # Change FL_FORMAT
+	    unhighlight_cursor ();
+	    $FL_FORMAT = $FL_FORMAT eq 'long' ? 'date' : 
+		         $FL_FORMAT eq 'date' ? 'path' : 
+			 $FL_FORMAT eq 'path' ? 'name' : 
+					        'long';
+	    compute_file_list ($current_dir);
+	    reframe (VALID_ALL, REF_CEN);
+	    # $current_dir will change automatically next
+	    next;
+	}
+	elsif ($key eq "\cp")	 # c-p ^p
+	{
+	    # Perl prompt
+	    disp_message ("");
+	    while (1)
+	    {
+		$perlcmd = read_a_line ("Perl> ", "PERL", ['The Perl Prompt']);
+		ReadMode ($TERM_NORMAL);
+		print "\n";
+		chomp $perlcmd;
+		last if $perlcmd =~ /\b(quit|exit)\b/i;
+		my @x = eval ($perlcmd);
+		if ($@)
+		{
+		    local $_ = $@;
+		    chomp; 
+		    print "Error: $_\n";
+		    $@ = $! = "";
+		}
+		else
+		{
+		    print "Returns [",join(',',@x),"]\n";
+		}
+		ReadMode ($TERM_CBREAK);
+	    }
+	    ReadMode ($TERM_CBREAK);
+	    jump_to_mode ();
+	    next;
+	}
+	elsif ($key eq '!')
+	{
+	    # Shell
+	    printat (0, $SY-1, $STR_CEOL);
+	    ReadMode ($TERM_NORMAL);
+	    shell_exec_system ($::ENV{'SHELL'}, "Entering command shell... Type 'exit' to return to XYZ.", $current_dir);
+	    ReadMode ($TERM_CBREAK);
+	    jump_to_mode ();
+	    next;
+	}
+	elsif ($key eq "\x1be" && $TAR_MODE) # M-e
+	{
+	    # Extract all files from tar
+	    unzip_files (0);
+	    
+	    # Now, pop out of view (and escape from tar)
+	    # PROBLEMS???
+	    restore_modes (1);
+
+	    # Because unzip_files did a log, recompute dir graph
+	    $current_dir = $GP[$DGCUR];
+	    $current_file = @FP ? $FP[$FLCUR] : undef;
+	    compute_dir_graph ();
+	    compute_file_list ($current_dir);
+
+	    # And because we are inside a work() called from opening the tar
+	    # Just leave as if ESC was pressed
+	    $key = "\x1b";
+	    print FDEB "+++ M-E mapping key to ESC: key='$key' RIQ=$RETURN_IS_QUIT\n" if $DEBUG & 1;
+	    last;
+	}
+	# Major keys that work in any mode (by may be overriden with if's above 
+	exit (0) if $key eq 'q';
+	print FDEB "+++ Lasting out of work: key='$key' RIQ=$RETURN_IS_QUIT\n" if ($DEBUG & 1) &&
+    		$RETURN_IS_QUIT && ($key eq "\r" || $key eq $KEY_KENTER || $key eq "\x1b");
+	last if $RETURN_IS_QUIT && ($key eq "\r" || $key eq $KEY_KENTER);
+	last if $RETURN_IS_QUIT && $key eq "\x1b";
+	redo if $key eq "\x1b";
+    }
+    continue
+    {
+	# "Next" or not doing anything goes here.
+	# We assume FL and DG cur might have changed
+	$current_file = @FP ? $FP[$FLCUR] : undef;
+	$current_dir = $GP[$DGCUR];
+	display_highlights_stats_and_hints ();
+    }
+    print FDEB "Leave work($RETURN_IS_QUIT): cf=$current_file cd=$current_dir\n" if $DEBUG & 4;
+    print FDEB "+++ Leave work($RETURN_IS_QUIT): cf=$current_file cd=$current_dir MODE=$MODE\n" if $DEBUG & 1;
+
+    remind_before_after ();
+
+    # Return these: Undef for Esc; otherwise current dir/file
+    $key eq "\x1b" ? undef : ($current_dir, $current_file);
+}
+    
+##############################################################################
+##############################################################################
+##############################################################################
+# Run Time
+
+$VERSION_NUM = "1.34";
+$VERSION = "XYZ ${VERSION_NUM}j";
+$FOR_DOC = 0;
+
+$REMINDER_BORDER = "\r".('-'x26)."\n";
+
+@REMINDER_STRING = (222656097, 1819631988, 1768910368, 1131376761,
+538976288, 538976288, 538976266, 222782836, 544367975, 1769174117,
+1919247392, 1668247673, 543257632, 538976266, 225933175, 779252836,
+1953050211, 1869426552, 2038050674, 1701276019, 1952805408, 538976266,
+220742441, 842018869, 542273378, 1701999648, 1148155756, 1768843040,
+538976266, 222653793, 1768700448, 2021227072, 1920230516, 1764647791,
+1830821920);
+
+# Graphical line characters
+$LINES = 1; 
+
+# Save this for grepping later
+$PROG = $_;
+
+# Debug
+$DEBUG = 1 | 4 | 8;
+use IO::Handle;
+open (FDEB, ">/tmp/debug"), FDEB->autoflush(1) if $DEBUG;
+
+$REBUG = 0;
+
+# Args: -options
+# print FDEB "Args now=",join(',',@::ARGV),"\n";
+my $any_args = 0;
+for (@::ARGV)
+{
+    $any_args = 1, next unless s/^-//;
+    $FOR_DOC = 1, $_ = () if /^-doc/i;	# Internal --doc for creating xyz.doc
+    $PROFILE = 1, $_ = () if /^s/	# Internal -s for profiling speed
+}
+# print FDEB "Args now=",join(',',@::ARGV),"\n";
+
+# Make changes for documentation capture mode
+do "for-doc.pl" if $FOR_DOC;
+
+$LINES = 0 if $FOR_DOC;
+
+# Graphical line characters for drawing dir graph
+($add0, $add1, $add2, $add3) = ("|  ", "   ", "|__", "\\__"); # Modern
+($add0, $add1, $add2, $add3) = ("|  ", "   ", "|--", "`--"); # Old
+($add0, $add1, $add2, $add3) = ("x  ", "   ", "tqq", "mqq") if $LINES;
+
+# Keys
+if (system ("tput -V >/dev/null 2>&1") < 0)
+{
+    $KEY_F1    = TermCapKeyIs ('k1');
+    $KEY_F2    = TermCapKeyIs ('k2');
+    $KEY_F3    = TermCapKeyIs ('k3');
+    $KEY_F4    = TermCapKeyIs ('k4');
+    $KEY_F5    = TermCapKeyIs ('k5');
+    $KEY_F6    = TermCapKeyIs ('k6');
+    $KEY_F7    = TermCapKeyIs ('k7');
+    $KEY_F8    = TermCapKeyIs ('k8');
+    $KEY_F9    = TermCapKeyIs ('k9');
+    $KEY_F10   = TermCapKeyIs ('k;');
+    $KEY_UP    = TermCapKeyIs ('ku');
+    $KEY_DOWN  = TermCapKeyIs ('kd');
+    $KEY_LEFT  = TermCapKeyIs ('kl');
+    $KEY_RIGHT = TermCapKeyIs ('kr');
+    $KEY_HOME  = TermCapKeyIs ('kh');
+    $KEY_END   = TermCapKeyIs ('@7');
+    $KEY_PGUP  = TermCapKeyIs ('kP');
+    $KEY_PGDN  = TermCapKeyIs ('kN');
+    $KEY_INSERT= TermCapKeyIs ('kI');
+    $KEY_DELETE= TermCapKeyIs ('kD');
+    $KEY_BKSP  = TermCapKeyIs ('kb');
+    set_termcap_strings ();  
+} else {
+    # init, turn on key pad, enable alt char set
+    print `tput init`, `tput smkx`, `tput enacs`;
+    $KEY_F1    = TermInfoKeyIs ('kf1');	# k1
+    $KEY_F2    = TermInfoKeyIs ('kf2');	# k2
+    $KEY_F3    = TermInfoKeyIs ('kf3');	# k3
+    $KEY_F4    = TermInfoKeyIs ('kf4');	# k4
+    $KEY_F5    = TermInfoKeyIs ('kf5');	# k5
+    $KEY_F6    = TermInfoKeyIs ('kf6');	# k6
+    $KEY_F7    = TermInfoKeyIs ('kf7');	# k7
+    $KEY_F8    = TermInfoKeyIs ('kf8');	# k8
+    $KEY_F9    = TermInfoKeyIs ('kf9');	# k9
+    $KEY_F10   = TermInfoKeyIs ('kf10');	# k;
+    $KEY_UP    = TermInfoKeyIs ('kcuu1');	# ku
+    $KEY_DOWN  = TermInfoKeyIs ('kcud1');	# kd
+    $KEY_LEFT  = TermInfoKeyIs ('kcub1');	# kl
+    $KEY_RIGHT = TermInfoKeyIs ('kcuf1');	# kr
+    $KEY_HOME  = TermInfoKeyIs ('khome');	# kh
+    $KEY_END   = TermInfoKeyIs ('kend');	# @7
+    $KEY_PGUP  = TermInfoKeyIs ('kpp');	# kP
+    $KEY_PGDN  = TermInfoKeyIs ('knp');	# kN
+    $KEY_INSERT= TermInfoKeyIs ('kich1');	# kI
+    $KEY_DELETE= TermInfoKeyIs ('kdch1');	# kD
+    $KEY_BKSP  = TermInfoKeyIs ('kbs');	# kb
+
+    $KEY_KDIVIDE = $KEY_KSTAR = $KEY_KPLUS = $KEY_KMINUS = $KEY_KENTER = 'notpossible';
+    if ($::ENV{TERM} eq 'xterm')
+    {
+	$KEY_KDIVIDE = "\x1bOo";
+	$KEY_KSTAR = "\x1bOj";
+	$KEY_KPLUS = "\x1bOk";
+	$KEY_KMINUS = "\x1bOm";
+	$KEY_KENTER = "\x1bOM";
+    }
+    set_terminfo_strings ();
+}
+# Fixup bug in xterm (gnome-terminal) running under Linux
+$KEY_BKSP = "\x7f" if $KEY_DELETE ne "\x7f" && $KEY_BKSP eq "\x08";
+
+# Cursor control strings
+
+# Screen geometry
+($SX, $SY) = GetTerminalSize();
+($SX, $SY) = (76,30) if $FOR_DOC;
+
+$SYMODE  = $SY-7;
+$SYTOTAL = $SY-6;
+$SYCURDIR= $SY-5;
+$SYHINT0 = $SY-4;
+$SYHINT1 = $SY-3;
+$SYHINT2 = $SY-2;
+$SYMSG   = $SY-1;
+$SYREBUG = $SY-8;
+
+# Bounds of various screens
+
+# First reserved line (for status, messages, hints, etc)
+$SYFIRST = $REBUG ? $SYREBUG : $SYMODE;
+# Last reserved line: The bottome of the screen
+$SYLAST = $SY-1;
+# FIrst reserved line for FV mode (it is status)
+$SYFVSTATUS = $SYHINT1;
+
+# Where to split screen vertically
+my $SX_SPLIT = $SX < 100 ? int ($SX * .4) : int ($SX/2);
+
+# DG = Dir Graph
+($SXDG0, $SYDG0, $SXDG1, $SYDG1) = (0, 0, $SX_SPLIT-1, $SYFIRST-1);
+($SXDGD, $SYDGD) = ($SXDG1-$SXDG0+1, $SYDG1-$SYDG0+1);
+# DF = Dir Files
+($SXDF0, $SYDF0, $SXDF1, $SYDF1) = ($SX_SPLIT, 0, $SX-1, $SYFIRST-1);
+($SXDFD, $SYDFD) = ($SXDF1-$SXDF0+1, $SYDF1-$SYDF0+1);
+$SXDGDg = $SXDF1-$SXDG0+1;
+# FL = File List
+($SXFL0, $SYFL0, $SXFL1, $SYFL1) = (0, 0, $SX-1, $SYFIRST-1);
+($SXFLD, $SYFLD) = ($SXFL1-$SXFL0+1, $SYFL1-$SYFL0+1);
+# FV = File View (full screen)
+($SXFV0, $SYFV0, $SXFV1, $SYFV1) = (0, 0, $SX-1, $SYFVSTATUS-1);
+($SXFVD, $SYFVD) = ($SXFV1-$SXFV0+1, $SYFV1-$SYFV0+1);
+# LVL = File List + View (split screen): this is LIST side
+($SXLVL0, $SYLVL0, $SXLVL1, $SYLVL1) = (0, 0, 20-1, $SYFIRST-1);
+($SXLVLD, $SYLVLD) = ($SXLVL1-$SXLVL0+1, $SYLVL1-$SYLVL0+1);
+# LVV = File List + View (split screen): this is LIST side
+($SXLVV0, $SYLVV0, $SXLVV1, $SYLVV1) = (20, 0, $SX-1, $SYFIRST-1);
+($SXLVVD, $SYLVVD) = ($SXLVV1-$SXLVV0+1, $SYLVV1-$SYLVV0+1);
+
+# printf FDEB "SXDG0=%d, SYDG0=%d, SXDG1=%d, SYDG1=%d, SXDGD=%d, SYDGD=%d\n", $SXDG0, $SYDG0, $SXDG1, $SYDG1, $SXDGD, $SYDGD;
+# printf FDEB "SXDF0=%d, SYDF0=%d, SXDF1=%d, SYDF1=%d, SXDFD=%d, SYDFD=%d\n", $SXDF0, $SYDF0, $SXDF1, $SYDF1, $SXDFD, $SYDFD;
+# printf FDEB "SXFL0=%d, SYFL0=%d, SXFL1=%d, SYFL1=%d, SXFLD=%d, SYFLD=%d\n", $SXFL0, $SYFL0, $SXFL1, $SYFL1, $SXFLD, $SYFLD;
+
+$d = ".";
+$S = '/';
+$HOME = $::ENV{HOME};
+$HELP = $FindBin::RealBin . $S . "xyz.doc";
+$HELP = $FindBin::RealBin . "/../share/doc/xyz-${VERSION_NUM}/xyz.doc" 
+    unless -r $HELP;
+$HELP = "/usr/share/doc/xyz-${VERSION_NUM}/xyz.doc" unless -r $HELP;
+$HIST = $HOME . $S . ".xyz";
+($SLEEP) = unpack 'u', uc sprintf '\'<vqe%d`@,P``', ord 'a';
+
+# User-Config
+$CONFIG_HINT_KEYS_BOLD = 1;
+
+# Read in saved state
+read_in_help ($HELP);
+load_history ($HIST);
+
+
+# Set terminal I/O
+$TERM_CBREAK = 'ultra-raw';
+$TERM_NORMAL = 'normal';
+ReadMode ($TERM_CBREAK);
+$| = 1;
+cls ();
+
+# Set program modes
+$MODE = 'DG';		# 'DG'=Dir Graph, 'FL'=File List, 'FV'=File View 
+			# 'LV'=List View
+$FL_MODE = 'current';	# 'current', 'showall', 'branch'
+$FL_FORMAT = 'date';	# 'date': date/size/name; 'path': path; 'long' for ls -la, 'name' for name only
+$DG_MODE = 'logged';	# 'occupied'
+$DG_FORMAT = 'both';	# 'graph': graph only; 'both': graph + FL on right, 'stats' graph only + stats, 'long' = ls -la
+$FV_MODE = 'ascii';	# 'ascii' = normal file view.  'binary', 'help' = help viewer
+$LINK_FORMAT = 'point';	# 'point' = show dest but no follow; 'follow' = follow
+$TAG_MODE = 'any';	# 'any' = both tagged and untagged; 'tag' = tagged only
+$TAR_MODE = undef;	# undef = file system, defined = tar archive
+
+save_modes ();
+
+# Log current dir
+$START_DIR = getcwd();
+unshift @::ARGV, $START_DIR unless $any_args;
+for (@::ARGV)
+{
+    next unless $_;  # Skip -option args taken earlier
+    $log_from = $_;
+    # Rectify what we get
+    $log_from = $START_DIR . $S . $log_from unless $log_from =~ m:^/:;
+    if (chdir $log_from)
+    {
+	$log_from = getcwd();
+    }
+    # print FDEB "ARGV=$log_from ->";
+    log_dir ($log_from, 1);
+}
+# print FDEB "After ARGV: log_from=$log_from\n";
+chdir $START_DIR;
+$DGCUR = compute_dir_graph ($log_from);
+# print FDEB "log_from=$log_from start=$START_DIR, DGCUR=$DGCUR\n";
+
+# Catch die's and confess's and copy their message to DEBUG if open
+$::SIG{__DIE__} = sub {
+    my $m = shift;
+    print FDEB "die message='$m'\n" if $DEBUG;
+};
+
+# Run the GUI
+work (0);
+
+# In case something goes wrong, ^P then "fix();"
+sub fix()
+{
+    ReadMode ($TERM_NORMAL);
+}    
+
+sub dump_symbols ()
+{
+    my %y = %{'main::'};
+    for (sort keys %y)
+    {
+   	next unless /[0-9A-Za-z]/;
+   	next if /::/;
+   	local *sym = $y{$_};
+   	#print FDEB "\$$_\n" if defined $sym;
+   	#print FDEB "\@$_\n" if defined @sym;
+   	#print FDEB "\%$_\n" if defined %sym;
+   	#print FDEB "\&$_\n" if defined &sym;
+	print FDEB "$_\n" if defined &sym;
+    }
+}
+
+END
+{
+    print FDEB "\@='$@'\n" if $DEBUG;
+    cursor (0,$SY-1);
+    remind_before_after ();
+    ReadMode ($TERM_NORMAL);
+    save_history ($HIST);
+    print STDERR @TT if $PROFILE;
+;
+}
+
+### eval
+### eval
+sub remind_before_after () {}

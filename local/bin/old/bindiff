@@ -1,0 +1,17 @@
+#!/usr/bin/perl
+
+$f1 = shift;
+$f2 = shift;
+
+open (F1, "od -t x1 -A x $f1 |") or die $!;
+open (F2, "od -t x1 -A x $f2 |") or die $!;
+
+$fail = 0;
+while ($l1 = <F1>)
+{
+    $l2 = <F2>;
+    $fail=1, print "Diff on line $.:\n$l1$l2" if $l1 ne $l2;
+    $.++;
+}
+
+print "FAILED\n" if $fail;

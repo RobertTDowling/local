@@ -1,0 +1,20 @@
+#!/usr/bin/perl
+
+sub fmttime ($)
+{
+    my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) =
+	localtime(@_[0]);
+    sprintf ("%02d-%02d-%02d %02d:%02d:%02d", $mon+1, $mday, $year%100,
+	     $hour,$min,$sec);
+}
+
+$glob = shift || '*';
+print "      Size  ------Create-----  -----Access------  ------Modify-----\n";
+for (sort glob ($glob))
+{
+    ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,
+     $blksize,$blocks) = stat;
+    printf ("%10d  %s  %s  %s  %s\n", $size, fmttime($ctime), 
+	    fmttime($atime), fmttime($mtime), $_);
+}
+

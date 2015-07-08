@@ -1,0 +1,12 @@
+#!/usr/bin/perl
+
+# Print just the first line (usually #!/usr/local/bin/perl) of all files
+
+for $f (<*>)
+{
+	open (FIN, $f) or next;
+	chomp ($_ = <FIN>);
+	close FIN;
+	$_ = 'bin' unless /^\#!/;
+	printf "%-16s %s\n", $f, $_;
+}

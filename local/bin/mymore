@@ -1,0 +1,13 @@
+#!/usr/bin/perl
+
+while ($f = shift)
+{
+        open (FIN, $f) || die $!;
+        print '='x30,"\n$f\n",'='x30,"\n";
+        while (<FIN>)
+        {
+                s/\r//;
+                print;
+        }
+        close FIN;
+}

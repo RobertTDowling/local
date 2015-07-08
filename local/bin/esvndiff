@@ -1,0 +1,27 @@
+#!/bin/bash
+# A certain amount lifted from ediff
+
+revision=""
+if [ "$1" = "-r" ]; then
+    revision=$2;
+    shift;
+    shift;
+fi
+
+# Get file
+file="$1"
+
+# Get revision
+if [ -z "$revision" ]; then
+    revision=$(svn info "$file" | fgrep Revision: | cut -d ' ' -f 2)
+fi
+
+# Get 2nd file
+temp="$file.svn$revision"
+svn export -r$revision "$file" "$temp"
+x="ediff \"$file\" \"$temp\""
+
+# Run emacs in ediff mode
+emacs -g 138x48+0+0 --exec "($x)"
+
+rm "$temp"

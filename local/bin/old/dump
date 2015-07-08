@@ -1,0 +1,18 @@
+#!/usr/bin/perl
+
+while ($_=shift)
+{
+	open (FIN, $_) || die;
+	while ($l = read (FIN, $buf, 16))
+	{
+		@c = unpack "c16", $buf;
+		# (@c) = split //, $buf;
+		for (0..15)
+		{
+			printf ("%02x ", 0xff & shift (@c));
+		}
+		$buf =~ tr/ -|/./c;
+		print "  $buf\n";
+	}
+	close (FIN);
+}
