@@ -1,0 +1,44 @@
+#!/bin/sh
+
+FOLDER=$1 # Folder to transfer into 
+if [ -z "$FOLDER" ]; then
+    echo "Missing folder on command line."
+    exit 1;
+fi
+
+LOOP=$(sudo losetup -f)  # Find a free loop device
+M=5
+F=$(basename $FOLDER).ext4
+FE=${F}_enc
+
+echo "Making ${M}MB file $F to hold $FOLDER"
+if [ -e $F ]; then
+    echo "Error $F already exists"
+    exit 1;
+fi
+dd if=/dev/zero of=$F bs=1M count=$M # must be >2MB 
+# sudo losetup $LOOP # -- verify nothing there
+echo "=Using $LOOP device for $F"
+sudo losetup $LOOP $F
+echo "=Loop $LOOP attached to $(losetup $LOOP)"
+sudo badblocks -s -w -t random -v $LOOP
+echo "=cryptsetup Format $LOOP"
+sudo cryptsetup -y luksFormat $LOOP
+echo "=cryptsetup luksOpen $LOOP $FE"
+sudo cryptsetup open --type luks $LOOP $FE
+echo "=ls -la /dev/mapper"
+ls -la /dev/mapper
+echo "=mkfs -t ext /dev/mapper/$FE"
+sudo mkfs -t ext4 /dev/mapper/$FE
+echo "=mount /dev/mapper/$FE /mnt"
+sudo mount /dev/mapper/$FE /mnt
+echo "=ls -la /mnt"
+ls -la /mnt
+sudo cp -pr $FOLDER /mnt
+sudo chown -R rob:rob /mnt/$FOLDER
+
+sudo umount /mnt
+sudo cryptsetup close $FE
+sudo losetup -d $LOOP
+
+exit 0

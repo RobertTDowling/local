@@ -1,0 +1,29 @@
+#!/bin/sh
+
+F=$1 # File to mount
+if [ -z "$F" ]; then
+    echo "Missing filesystem file on command line."
+    exit 1;
+fi
+
+LOOP=$(sudo losetup -f)  # Find a free loop device
+FE=${F}_enc
+
+echo "=Using $LOOP device for $F"
+sudo losetup $LOOP $F
+echo "=Loop $LOOP attached to $(losetup $LOOP)"
+echo "=cryptsetup luksOpen $LOOP $FE"
+sudo cryptsetup open --type luks $LOOP $FE
+echo "sudo mount /dev/mapper/$FE /mnt"
+sudo mount /dev/mapper/$FE /mnt
+ls -la /mnt
+
+O="~/local/bin/encrypted-umount"
+echo "#!/bin/sh" > $O
+echo "sudo umount /mnt" >> $O
+echo "sudo cryptsetup close $FE" >> $O
+echo "sudo losetup -d $LOOP" >> $O
+echo "rm $O" >> $O
+chmod +x $O
+
+exit 0
