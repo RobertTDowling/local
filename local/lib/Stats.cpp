@@ -76,9 +76,9 @@ double CStats::Mean ()
 
 double CStats::Stdev ()
 {
-  if (m_N)
+  if (m_N > 1)
   {
-    return sqrt ((m_SXX - m_SX*m_SX/m_N) / (1+m_N));
+    return sqrt ((m_SXX - m_SX*m_SX/m_N) / (m_N-1));
   }
   return 0.0;
 }
