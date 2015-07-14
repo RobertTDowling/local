@@ -2,7 +2,7 @@ package histo;
 
 # Minimal statistics
 #
-'(C) Copyright 2010 Robert Dowling.';
+'(C) Copyright 2010-2015 Robert Dowling.';
 #
 #    This program is free software; you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by
@@ -178,3 +178,121 @@ sub show_buckets_range ()
 }
 
 1;
+__END__
+
+=head1 NAME
+
+histo - perl library for simple histogram statistics
+
+=head1 SYNOPSIS
+
+ use histo;
+
+ $o = new histo;
+ $o->add (1);
+ $o->add (2);
+ $o->add (3);
+ print "N=",$o->N, "\n";
+ print "min=",$o->min, "\n";
+ print "max=",$o->max, "\n";
+ print "buckets of 5:", join(',' $o->buckets(5)), "\n";
+
+=head1 DESCRIPTION
+
+The B<histo> library calculates simple histogram statistics.
+
+The B<histo> library is even less of a drop-in replacement for the
+B<stats> library than B<stats34> is, because it has the overhead of
+maintaining the entire set of data in order to perform the histogram
+bucket computations.  But it is worth looking at B<man stats> to see
+where this came from.
+
+=over
+
+=item new histo
+
+Construct a new B<histo> object.  It contains all the information
+necessary to compute histogram statistics on one set of data.  If you
+want to analyze multiple sets of data, create multiple objects.
+
+=item add (x)
+
+Add value B<x> to the set.  This will increase B<N> by 1
+
+=item N
+
+Return the number of items in the set.  When constructed, the set
+contains no values.
+
+=item min ()
+
+=item max ()
+
+Return the extreme values of the set, or "?" if the set is empty
+
+=item mean ()
+
+Return the B<mean> value of the set, or "?" if the set is empty
+
+=item mode (w)
+
+Return the B<mode> of the set, value in the set which appears the most
+often, or one of the values if several are tied.
+
+=item modeN (w)
+
+Return the count of the elements that are the B<mode> of the set.
+
+=item median ()
+
+Return the "center value" of the sorted set.  By definition, the
+B<median> of a set with a even number of elements is the average of
+the two center-most elements.  For sets with an odd number of elements,
+the B<median> is always an element of the set, unlike B<mean>
+
+=item median_pct (p)
+
+Return the value of B<q>'th element, where B<q>=B<floor>(B<N>*B<p>)
+and B<p> is a number in the range [0..1).
+
+B<Median> = B<median_pct> (0.5) for a set with a odd number of
+elements.  (Hopefully!)
+
+=item ($first, $last) = percentile (target)
+
+Return the positions (as a percent) in the sorted set of values of the
+B<first> and B<last> values in the set that are equal to the B<target>
+value.
+
+=item @b = buckets (w)
+
+Return a list B<@b> of buckets of width B<w> that form a histogram.
+For example, if B<w>=5, then B<$b[0]> will have the count of values in
+the set that are in the range 0..4, and B<$b[1]> will have the count
+for 5..9, and so on.
+
+=item show_buckets (w)
+
+Compute B<buckets(w)> and print out the histogram as a table.
+
+=item show_nz_buckets (w)
+
+Compute B<buckets(w)> and print out the histogram as a table, showing
+only buckets with non-zero counts.
+
+=item show_bucket_range (low, high, w)
+
+Compute B<buckets(w)> and print out the histogram as a table, showing
+only buckets from B<low> to B<high>.
+
+=back
+
+=head1 SEE ALSO
+
+stats(3), stats34(3), perm(3), sets(3), normaldist(3), Stats(3), Histo(3)
+
+=head1 AUTHOR
+
+Robert Dowling <F<RPNCalcN@gmail.com>>.
+
+=cut
