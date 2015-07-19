@@ -19,38 +19,61 @@
 #    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 
-###our @P;
-our $RAND = 0;
+package perm;
 
-use List::Util 'shuffle';
+# Usage
+# $p = new perm;
+# @p = $p->init (3);
+# do {
+#    print join(',', @p), "\n";
+#    @p = $p->next;
+# } while (@p);
+#
 
-sub init_perm ($;$)
+# use List::Util 'shuffle';
+
+require Exporter;
+our @ISA = qw(Exporter);
+our @EXPORT = qw(new init state next fact);
+
+# Create a new permutation object for N elements
+sub new ()
 {
-    
-    my $Pn = shift;
-    $RAND = shift if @_;
-    @P = (0..$Pn-1);
+    my $self = {};
+    bless $self;
+    $self;
 }
 
-sub perm ()
+# Reinitialize to a new size (or the same size if no size passed in)
+# Returns the first permutation, the one that goes 0..N-1
+sub init ($$)
 {
-    if ($RAND)
-    {
-	return () unless --$RAND;
+    my ($self, $N) = @_;
+    $self->{N} = $N;
+    $self->{P} = [0..$N-1];
+    return $self->state;
+}
 
-	# Just shuffle and return
-	@P = shuffle @P;
-	return @P;
-    }
+sub state ()
+{
+    my $self = shift;
+    return @{$self->{P}};
+}
+
+# Returns the next permutation or an empty list when done
+sub next ()
+{
+    my $self = shift;
+    my @P = @{$self->{P}};
 
     # E.W.Dijkstra, A Discipline of Programming, Prentice-Hall, 1976, P 71.
     my $i = $#P-1;
     $i-- while ($P[$i] > $P[$i+1]);
     return () if $i < 0;
-#  print "oldP=(",join(',',@P),") \$#=",$#P," i down to $i ";
+
     my $j = $#P;
     $j-- while ($P[$i] > $P[$j]);
-#  print "j down to $j\n";
+
     # Swap P[i] and P[j]
     ($P[$i], $P[$j]) = ($P[$j], $P[$i]);
     $i++;
@@ -61,21 +84,9 @@ sub perm ()
 	$i++;
 	$j--;
     }
-#  print "newP=(",join(',',@P),")\n";
+
+    $self->{P} = \@P;
     @P;
-}
-
-##############################################################################
-
-sub advance_past ($)
-{
-    my $index = shift;
-#  print "advance_past ($index) oldP=(",join(',',@P),")\n";
-    return if $index >= $#P-1;
-    my @p = ();
-    push @p, $P[$_] for ($index+1 .. $#P);
-    @P[$index+1..$#P] = sort { $b <=> $a } @p;
-#  print "advance_past ($index) newP=(",join(',',@P),")\n";
 }
 
 ##############################################################################
@@ -86,10 +97,64 @@ sub fact ($)
     $n > 1 ? $n * fact($n-1) : 1;
 }
 
-sub sum ($)
-{
-    my $n = shift;
-    $n > 0 ? $n + sum($n-1) : 0;
-}
-
 1;
+__END__
+
+=head1 NAME
+
+perm - perl library for simple permutations
+
+=head1 SYNOPSIS
+
+ use perm;
+
+ @p = $p->init (3);
+ do {
+    print join(',', @p), "\n";
+    @p = $p->next;
+ } while (@p);
+
+=head1 DESCRIPTION
+
+The B<perm> library generates all the permutations of a list of B<N>
+ordered numbers, 0..B<N>-1 using  E.W.Dijkstra's algorithm, which does not
+require nested loops.
+
+=over
+
+=item new perm
+
+Construct a new B<perm> object.  It contains the state of the
+permutation list.  If you want to have multiple lists in different
+states, create multiple objects.
+
+=item init (n)
+
+Initialize the B<perm> object to have B<n> items in the initial state,
+0..B<n>-1.
+
+Returns the list in the initial state
+
+=item next
+
+Advance to the next permutation.
+
+Returns the list in the new state, or the empty list, () if all permutations
+have been already exhausted.
+
+=item fact (n)
+
+Returns the factorial of B<n>, which is the number of permutations you
+will get of the set of B<n> numbers.
+
+=back
+
+=head1 SEE ALSO
+
+sets(3), stats(3), stats34(3), histo(3), normaldist(3), Stats(3), Histo(3)
+
+=head1 AUTHOR
+
+Robert Dowling <F<RPNCalcN@gmail.com>>.
+
+=cut
