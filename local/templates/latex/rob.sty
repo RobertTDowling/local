@@ -1,0 +1,167 @@
+% -*-latex-*-
+% \documentclass[10pt,letterpaper]{article}
+\setlength{\oddsidemargin}{0.0in}	% Make margins horiz=1" vert=1"
+\setlength{\evensidemargin}{0.0in}
+\setlength{\textwidth}{\paperwidth}
+\addtolength{\textwidth}{-2.0in}
+\setlength{\textheight}{\paperheight}
+\addtolength{\textheight}{-2.0in}
+
+\setlength{\marginparwidth}{.55in}	% For margin notes, remove this item
+\setlength{\marginparsep}{.1in}		% For margin notes, remove this item
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{mdwlist}
+\newcommand{\inject}[1]{\suspend{enumerate}{#1}\resume{enumerate}}
+\newcommand{\Iinject}[1]{\end{itemize}{#1}\begin{itemize}}
+\newcommand{\vocoder}[1]{\begin{quote}\hrulefill\\#1\\
+            \hbox{}\hrulefill\hbox{}\end{quote}}
+\newcommand{\Note}[1]{\par\textbf{Note: }#1}
+\usepackage{latexsym} % For \Box
+% \usepackage{pifont}
+\usepackage{amssymb}
+% \newcommand{\checkna  }{\sffamily\small N/A\hspace{1ex}$\boxtimes$}
+% \newcommand{\checktodo}{\sffamily\small Needs to be checked\hspace{1ex}$\Box$}
+% \newcommand{\checkcant}{\sffamily\small Unable to verify\hspace{1ex}$\Box$}
+% \newcommand{\checkwip }{\sffamily\small WIP\hspace{1ex}$\Box$}
+% \newcommand{\checkpass}{\sffamily\small Pass\hspace{1ex}$\boxtimes$}
+%\newcommand{\checkfail}{\fbox{\sffamily\small\textbf{FAIL}}\hspace{1ex}$\boxtimes$}
+% \newcommand{\texttodo}{\sffamily{To Do}}
+% \newcommand{\textpass}{\sffamily{Pass}}
+% \newcommand{\textfail}{\sffamily{\textbf{FAIL}}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{array}	% For >{decl} in tables
+\newenvironment{mytable}
+	       {\vspace{10pt}\begin{center}\begin{tabular}}
+	       {\end{tabular}\end{center}\vspace{10pt}}
+\newenvironment{mytable*}
+	       {\begin{center}\begin{tabular}}
+	       {\end{tabular}\end{center}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{alltt}
+
+% ecode environment: For quoting code
+\newenvironment{ecode}
+	       {\begin{quote}\begin{alltt}}
+	       {\end{alltt}\end{quote}}
+
+% ecode environemnt within a figure
+\newcommand{\myfiglab}{}
+\newcommand{\myfigcap}{}
+\newenvironment{ecodefig}[3][htbp]
+	       {\begin{figure}[#1]
+		\renewcommand{\myfiglab}{#2}
+		\renewcommand{\myfigcap}{#3}
+		\begin{quote}
+		\begin{alltt}}
+	       {\end{alltt}
+		\end{quote}
+                \caption{\myfigcap}\label{\myfiglab}\end{figure}}
+% Varwidth version of ecodefig: does centering of alltt inside a figure
+\usepackage{varwidth}
+\newenvironment{ecodefigc}[3][htbp]
+	       {\begin{figure}[#1]
+		\renewcommand{\myfiglab}{#2}
+		\renewcommand{\myfigcap}{#3}
+		\centering\begin{varwidth}{\linewidth}
+		\begin{alltt}}
+	       {\end{alltt}\end{varwidth}
+                \caption{\myfigcap}\label{\myfiglab}\end{figure}}
+
+% Varwidth version of ecodefig: does centering of alltt inside a figure
+% with an fbox around the text
+\newsavebox{\fmbox}
+\newenvironment{ecodefigcf}[3][htbp]
+	       {\begin{figure}[#1]
+		\renewcommand{\myfiglab}{#2}
+		\renewcommand{\myfigcap}{#3}
+		\begin{lrbox}{\fmbox}
+		\begin{varwidth}{\linewidth}
+		\begin{alltt}}
+	       {\end{alltt}\end{varwidth}
+		\end{lrbox}\centering\fbox{\usebox{\fmbox}}
+                \caption{\myfigcap}\label{\myfiglab}\end{figure}}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newenvironment{usage}
+	       {\begin{quotation}\ttfamily}
+	       {\end{quotation}}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newcommand{\checktodo}{$\Box$}
+\newcommand{\checkdone}{$\boxtimes$}
+
+\newcommand{\script}[1]{\textbf{\texttt{#1}}}
+\newcommand{\bin}[1]{\textbf{\texttt{#1}}}
+\newcommand{\file}[1]{\textbf{\texttt{#1}}}
+% \newcommand{\code}[1]{\underline{\textbf{\texttt{#1}}}}
+\newcommand{\code}[1]{\textbf{\texttt{#1}}}
+\newcommand{\codeplain}[1]{\texttt{#1}}
+\newcommand{\param}[1]{\emph{#1}}
+\newcommand{\cparam}[1]{\textbf{\texttt{\param{#1}}}}
+\newcommand{\constant}[1]{\textbf{\texttt{#1}}}
+
+\newcommand{\bs}{\textbackslash}
+% \newcommand{\bar}{\textbar}
+% \newcommand{\asciisquish}{\footnotesize\setlength{\baselineskip}{-5.5pt}}
+% \newcommand{\asciisquish}{\setlength{\baselineskip}{-5.5pt}\footnotesize}
+\newcommand{\asciisquish}{\setlength{\baselineskip}{7pt}}
+\newcommand{\tinyasciisquish}{\setlength{\baselineskip}{3pt}}
+\newcommand{\lodeasm}{\bin{lodeasm}}
+\newcommand{\lodelink}{\bin{lodelink}}
+\newcommand{\lsb}{\bin{lsb}}
+
+\newcommand{\doubt}[1]{\marginpar{\flushright #1}}
+% \newcommand{\study}{\doubt{$\otimes$}}
+\newcommand{\study}{\doubt{\textbf{??}}}
+
+\newcommand{\resolves}{$\longrightarrow$}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Intentions
+
+\newcommand{\proposal}[2]{\subsection{#1}\label{#2}}
+\newcommand{\issue}[2]{\subsection{#1}\label{#2}}
+
+%\usepackage{remreset}
+% \makeatletter \@removefromreset{subsection}{section} \makeatother
+% \renewcommand{\thesection}{\arabic{section}}
+
+
+\newcommand{\motivation}{Motivation}
+\newcommand{\implementation}{Implementation}
+\newcommand{\impact}{Impact on Users}
+\newcommand{\existing}{Summary of Existing Condition}
+\newcommand{\scope}{Scope}
+\newenvironment{Lentry}
+	{\begin{list}{}
+	    {\listparindent 1.5em%
+	     \parsep 1pt%
+	     \let\makelabel\LentryLabel%
+	    }
+	}
+	{\end{list}}
+\newcommand{\LentryLabel}[1]{\parbox[b]{\labelwidth}%
+  				{\makebox[0pt][l]{\textbf{#1:}}\\\mbox{}}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% \usepackage{showkeys}  % Good for debugging but a bit much to look at.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%\renewcommand\familydefault{cmss} % Ugly!
+%\renewcommand\familydefault{txss} % Better
+% \renewcommand\familydefault{phv} % Helvetica, best
+% \renewcommand{\thesubsection}{\arabic{subsection}}
+% \usepackage{cmbright}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{graphicx}  % For includegraphics*
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% \begin{document}
+% \title{Lode Assembler and Linker \\
+%   User's Manual \\
+%  Version 8.0 }
+% \author{Robert Dowling --- rob@berkeley.atmel.com \\
+%   \tiny{\myfilename}}
+% \date{Last Update: \myfiledate}
+% \maketitle
+
+% \tableofcontents
+
+% \end{document}

@@ -1,0 +1,37 @@
+#!/bin/bash -e
+
+i=`basename $1 .tex`
+idate=$2
+if [ -z "$idate" ]; then idate=$i.tex; fi
+ps_offset=0in,-0.75in
+pdf_offset=0in,-0.75in
+keep_aux=0
+keep_log=0
+make_pdf=1
+if [ -e ~/.topsrc ]; then source ~/.topsrc; fi
+if [ -e .topsrc ]; then source .topsrc; fi
+
+# date=`date '+%B %e, %Y'`;
+procdate=`date "+%F %R"`
+filedate=`stat -c '%y' $idate | cut -c 1-16`
+echo "filedate=$filedate procdate=$procdate"
+file=`pwd`/$i.\\\{pdf,tex\\\}
+# echo Latex: $i.tex Last modified=${date}
+
+# latex $i.tex
+latex "\def\myfilename{$file} \def\myfiledate{$filedate} \def\myprocdate{$procdate} \input $i"
+latex "\def\myfilename{$file} \def\myfiledate{$filedate} \def\myprocdate{$procdate} \input $i"
+if [ "$make_pdf" != '0' ]; then
+    dvips -t letter -O $pdf_offset -o $i.ps $i.dvi
+    ps2pdf $i.ps
+    rm $i.ps
+else
+    dvips -t letter -O $ps_offset -o $i.ps $i.dvi
+fi
+
+
+# Plain text
+# catdvi $i.dvi >! $i.ascii
+rm -f $i.bak $i.dvi $i.log
+if [ ! $keep_aux -a -e $i.aux ]; then rm $i.aux; fi
+if [ ! $keep_log -a -e $i.log ]; then rm $i.log; fi

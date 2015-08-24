@@ -1,0 +1,36 @@
+digraph joey {
+plaintext	[ shape=plaintext ]
+ellipse	[ shape=ellipse ]
+oval	[ shape=oval ]
+circle	[ shape=circle ]
+egg	[ shape=egg ]
+triangle	[ shape=triangle ]
+box	[ shape=box ]
+diamond	[ shape=diamond ]
+trapezium	[ shape=trapezium ]
+parallelogram	[ shape=parallelogram ]
+house	[ shape=house ]
+hexagon	[ shape=hexagon ]
+octagon	[ shape=octagon ]
+note	[ shape=note ]
+tab	[ shape=tab ]
+box3d	[ shape=box3d ]
+component	[ shape=component ]
+
+plaintext -> ellipse
+plaintext -> oval
+ellipse -> circle
+ellipse -> egg
+oval -> triangle
+oval -> box
+circle -> diamond
+circle -> trapezium
+egg -> parallelogram
+egg -> house
+parallelogram -> hexagon
+parallelogram -> octagon
+box -> note
+box -> tab
+diamond -> box3d
+diamond -> component
+}
