@@ -137,6 +137,8 @@ alias e='emacs'
 alias dir='ls -l'
 alias dus='du -s * | sort -n'
 alias rd='sudo chown rob:rob'
+alias gk='gitk --all'
+alias gs='git status'
 
 # alias serial='sudo chmod a+rw /dev/ttyUSB0; sleep 1; putty &'
 # alias dftp="sudo \$HT/dftp-client.py"
