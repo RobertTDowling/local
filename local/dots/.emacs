@@ -5,10 +5,10 @@
   ;; If there is more than one, they won't work right.
  '(default ((t (:inherit nil :stipple nil :background "white" :foreground "black" :inverse-video nil :box nil :strike-through nil :overline nil :underline nil :slant normal :weight normal :height 120 :width normal :foundry "unknown" :family "DejaVu Sans Mono")))))
 
-;; :weight bold
-
-;; disable vc-git -- nuclear option
+;; disable vc-git
 (setq vc-handled-backends ())
+
+;; :weight bold
 
 ;; Turn off annoying splash screen
 (setq inhibit-splash-screen t)
@@ -52,8 +52,9 @@
 (global-set-key [f7] 'save-buffer)
 (global-set-key [f8] 'save-buffers-kill-emacs)
 ; (define 'set-tabs-of-4 (set-variable 'tab-width 4))
-; (global-set-key [f9] 'set-tabs-of-4)
-(global-set-key [f9] 'cperl-mode)
+(defun set-tabs-of-4 () (interactive) (set-variable 'tab-width 4))
+(global-set-key [f9] 'set-tabs-of-4)
+; (global-set-key [f9] 'cperl-mode)
 (global-set-key [f10] 'fundamental-mode)
 (global-set-key [f11] 'text-mode)
 ; (global-set-key [SunF36] 'enlarge-window)
@@ -72,6 +73,14 @@
 (set-variable 'next-line-add-newlines ())
 (line-number-mode "1")
 ;; (tool-bar-mode)
+
+(defun remove-dos-eol ()
+  "Do not show ^M in files containing mixed UNIX and DOS line endings."
+  (interactive)
+  (setq buffer-display-table (make-display-table))
+  (aset buffer-display-table ?\^M []))
+
+(add-hook 'c-mode-hook 'remove-dos-eol)
 
 (custom-set-variables
   ;; custom-set-variables was added by Custom.
