@@ -1,6 +1,6 @@
 [user]
 	name = Robert T Dowling
-	email = rpncalcn@gmail.com
+	email = foo@example.com
 [diff]
 	tool = ediff
 [difftool "ediff"]
