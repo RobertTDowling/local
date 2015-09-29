@@ -1,0 +1,9 @@
+#!/bin/sh
+
+DOT=$(mktemp /tmp/XXXXXX.dot)
+PNG=${DOT/.dot/.png}
+
+my-disp.pl $DOT && dot $DOT -Tpng -o $PNG && gthumb $PNG
+
+rm $DOT $PNG
+
