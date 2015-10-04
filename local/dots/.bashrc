@@ -139,6 +139,7 @@ alias dus='du -s * | sort -n'
 alias rd='sudo chown rob:rob'
 alias gk='gitk --all'
 alias gs='git status'
+alias r~='echo removing && find .. -name \*~ -print -delete'
 
 # alias serial='sudo chmod a+rw /dev/ttyUSB0; sleep 1; putty &'
 # alias dftp="sudo \$HT/dftp-client.py"
