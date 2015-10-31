@@ -13,9 +13,9 @@ open (FIN, "git for-each-ref|") or die;
 while (<FIN>)
 {
     # 6953fce3e94a995cb5e5fc51c31728e5998e0c9c commit	refs/heads/master
-    if (/(\S+)\s+commit\s+(\S+)/) {
+    if (/(\S+)\s+(commit|tag)\s+(\S+)/) {
 	$REF++;
-	my ($c, $n) = ($1, $2);
+	my ($c, $n) = ($1, $3);
 	$n =~ s:refs/[^/]+/::;
 	$n =~ s:(.+/)([^/]+)$:\1\n\2:;
 	# $n =~ s:origin/:origin/\n:;
