@@ -5,10 +5,13 @@ while (<FIN>) {
     $files ++;
     chomp;
     $t += -s;
+    $c += -s, next if /\.java$/;
     $c += -s, next if /\.c$/;
+    $c += -s, next if /\.cpp$/;
     $h += -s, next if /\.h$/;
     $doc += -s, next if /\.pdf$/;
     $doc += -s, next if /\.txt$/;
+    $doc += -s, next if /\.xml$/;
     $doc += -s, next if /\.html$/;
     $doc += -s, next if /\.htm$/;
     $make += -s, next if /\*.sh/;
