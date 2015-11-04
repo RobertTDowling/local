@@ -112,6 +112,10 @@ if [ -f /etc/bash_completion.d/git ]; then
     . /etc/bash_completion.d/git
 fi
 
+if [ -f ~/.git-completion.bash ]; then
+  . ~/.git-completion.bash
+fi
+
 PATH=~/local/bin:~/Android/Sdk/platform-tools:$PATH
 
 export LESS=-M
