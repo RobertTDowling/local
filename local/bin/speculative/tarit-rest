@@ -1,0 +1,11 @@
+#!/bin/bash
+date=`date +%Y-%m-%d`;
+d=/m/disk/t430-backup-$date
+E=echo
+E=
+# Make a directory
+echo mkdir -p $d
+$E mkdir -p $d
+# Copy the tar.gz's from `tarit`
+echo cp last/*.gz $d
+$E cp last/*.gz $d

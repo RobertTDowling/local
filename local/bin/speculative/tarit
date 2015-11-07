@@ -1,0 +1,16 @@
+#!/bin/bash
+tar -zcf dots.tar.gz /home/rob/.bashrc /home/rob/.emacs /home/rob/.gitconfig
+tar -zcf local.tar.gz /home/rob/local-git
+tar -zcf etc.tar.gz /etc
+tar -zcf android.tar.gz /home/rob/Android /home/rob/android-studio
+tar -zcf rob.tar.gz \
+    --exclude=/home/rob/android-studio \
+    --exclude=/home/rob/.* \
+    --exclude=/home/rob/Downloads/\*.iso \
+    --exclude=/home/rob/Android \
+    --exclude=/home/rob/media/non-audio \
+    --exclude=/home/rob/media/Library \
+    /home/rob
+
+
+# For media folder, see media/tar-media.sh
