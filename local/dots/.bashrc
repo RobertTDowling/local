@@ -116,7 +116,7 @@ if [ -f ~/.git-completion.bash ]; then
   . ~/.git-completion.bash
 fi
 
-PATH=~/local/bin:~/Android/Sdk/platform-tools:$PATH
+PATH=~/local/bin:~/local/bin/speculative:~/Android/Sdk/platform-tools:$PATH
 
 export LESS=-M
 export GIT_PAGER=
@@ -143,7 +143,7 @@ alias dus='du -s * | sort -n'
 alias rd='sudo chown rob:rob'
 alias gk='gitk --all'
 alias gs='git status'
-alias r~='echo removing && find .. -name \*~ -print -delete'
+alias r~='echo removing && find . -name \*~ -print -delete'
 
 # alias serial='sudo chmod a+rw /dev/ttyUSB0; sleep 1; putty &'
 # alias dftp="sudo \$HT/dftp-client.py"
