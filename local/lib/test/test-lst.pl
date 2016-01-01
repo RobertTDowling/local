@@ -17,3 +17,8 @@
  print "N=",$o->N, " expect 6\n";
  print "m=",$o->m, " expect 0.2727\n";
  print "b=",$o->b, " expect 0.0909\n";
+
+ $p = new leastsquares;
+ print "N=",$p->N, " expect 0\n";
+ print "m=",$p->m, " expect 0\n";
+ print "b=",$p->b, " expect 0\n";

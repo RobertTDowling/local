@@ -89,10 +89,6 @@ sub add ($$)
     $self->{SY}+=$y;
     $self->{SYY}+=$y*$y;
     $self->{SXY}+=$x*$y;
-
-    printf ("c=%d d=%d e=%d f=%d n=%d\n",
-	    $self->{SXX}, $self->{SXY}, $self->{SX},
-	    $self->{SY}, $self->{N});
 }
 
 #	let c=Sum(x_i^2), d=Sum(x_i y_i), e=Sum(x_i)
@@ -104,6 +100,7 @@ sub add ($$)
 sub m ($)
 {
     my $self = shift;
+    return 0 unless $self->{N};
     return (-$self->{SXY}*$self->{N} + $self->{SX}*$self->{SY}) /
 	    ($self->{SX}*$self->{SX} - $self->{N}*$self->{SXX});
 }
@@ -111,6 +108,7 @@ sub m ($)
 sub b ($)
 {
     my $self = shift;
+    return 0 unless $self->{N};
     return ($self->{SXY}*$self->{SX} - $self->{SXX}*$self->{SY}) /
 	   ($self->{SX}*$self->{SX}  - $self->{N}*$self->{SXX});
 }
