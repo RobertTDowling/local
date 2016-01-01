@@ -132,66 +132,53 @@
 .rm #[ #] #H #V #F C
 .\" ========================================================================
 .\"
-.IX Title "stats 3"
-.TH stats 3 "2016-01-01" "perl v5.22.1" "User Contributed Perl Documentation"
+.IX Title "leastsquares 3"
+.TH leastsquares 3 "2016-01-01" "perl v5.22.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
 .nh
 .SH "NAME"
-stats \- perl library for simple statistics
+leastsquares \- perl library for simple least squares
 .SH "SYNOPSIS"
 .IX Header "SYNOPSIS"
 .Vb 1
-\& use stats;
+\& use leastsquares;
 \&
-\& $o = new stats;
-\& $o\->add (1);
-\& $o\->add (2);
-\& $o\->add (3);
+\& $o = new leastsquares;
+\& $o\->add (0,0);
+\& $o\->add (1,0);
+\& $o\->add (2,1);
+\& $o\->add (3,1);
 \& print "N=",$o\->N, "\en";
-\& print "mean=",$o\->mean, "\en";
-\& print "stdev=",$o\->stdev, "\en";
-\& print "min=",$o\->min, "\en";
-\& print "max=",$o\->max, "\en";
+\& print "m=",$o\->m, "\en";
+\& print "b=",$o\->b, "\en";
 .Ve
 .SH "DESCRIPTION"
 .IX Header "DESCRIPTION"
-The \fBstats\fR library calculates simple statistics in the fashion of a
-handheld calculator.  All input and return values are floating point.
+The \fBleastsquares\fR library calculates a simple linear curve fit for a
+set of x,y data.  All input and return values are floating point.
 .IP "new stats" 4
 .IX Item "new stats"
-Construct a new \fBstats\fR object.  It contains all the information
+Construct a new \fBleastsquares\fR object.  It contains all the information
 necessary to compute statistics on one set of data.  If you want to
 analyze multiple sets of data, create multiple objects.
-.IP "add (x)" 4
-.IX Item "add (x)"
-Add value \fBx\fR to the set.  This will increase \fBN\fR by 1
+.IP "add (x,y)" 4
+.IX Item "add (x,y)"
+Add value \fBx,y\fR to the set.  This will increase \fBN\fR by 1
 .IP "N" 4
 .IX Item "N"
 Return the number of items in the set.  When constructed, the set
 contains no values.
-.IP "sum" 4
-.IX Item "sum"
-Return the sum of all the numbers in the set.
-.IP "mean" 4
-.IX Item "mean"
-Return the mean value of the set, or \*(L"?\*(R" if the set is empty
-.IP "stdev" 4
-.IX Item "stdev"
-Return the sample standard deviation of the set, or \*(L"?\*(R" if the set
-does not have 2 or more items.
-.IP "min" 4
-.IX Item "min"
-.PD 0
-.IP "max" 4
-.IX Item "max"
-.PD
-Return the extreme values of the set, or \*(L"?\*(R" if the set is empty
+.IP "m" 4
+.IX Item "m"
+Return the slope of the fit line: y=mx+b
+.IP "b" 4
+.IX Item "b"
+Return the y\-intercept of the fit line: y=mx+b
 .SH "SEE ALSO"
 .IX Header "SEE ALSO"
-\&\fIstats34\fR\|(3), \fIhisto\fR\|(3), \fIleastsquares\fR\|(3), \fIperm\fR\|(3), \fIsets\fR\|(3), \fInormaldist\fR\|(3),
-\&\fIStats\fR\|(3), \fIHisto\fR\|(3)
+\&\fIstats\fR\|(3), \fIstats34\fR\|(3), \fIhisto\fR\|(3), \fIperm\fR\|(3), \fIsets\fR\|(3), \fInormaldist\fR\|(3), \fIStats\fR\|(3), \fIHisto\fR\|(3)
 .SH "AUTHOR"
 .IX Header "AUTHOR"
 Robert Dowling <\fIRPNCalcN@gmail.com\fR>.

@@ -2,7 +2,7 @@ package stats;
 
 # Minimal statistics
 #
-'(C) Copyright 2005-2015 Robert Dowling.';
+'(C) Copyright 2005-2016 Robert Dowling.';
 #
 #    This program is free software; you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by
@@ -159,7 +159,8 @@ Return the extreme values of the set, or "?" if the set is empty
 
 =head1 SEE ALSO
 
-stats34(3), histo(3), perm(3), sets(3), normaldist(3), Stats(3), Histo(3)
+stats34(3), histo(3), leastsquares(3), perm(3), sets(3), normaldist(3),
+Stats(3), Histo(3)
 
 =head1 AUTHOR
 
