@@ -154,7 +154,7 @@ __END__
 
 =head1 NAME
 
-stats32 - perl library for simple statistics including skewness and kurtosis
+stats34 - perl library for simple statistics including skewness and kurtosis
 
 =head1 SYNOPSIS
 
@@ -174,11 +174,11 @@ stats32 - perl library for simple statistics including skewness and kurtosis
 
 =head1 DESCRIPTION
 
-The B<stats32> library calculates simple statistics in the fashion of
+The B<stats34> library calculates simple statistics in the fashion of
 a handheld calculator.  All input and return values are floating
 point.
 
-The B<stats32> library is mostly a drop-in replacement for the
+The B<stats34> library is mostly a drop-in replacement for the
 B<stats> library, with the added overhead necessary to compute the 3rd
 and 4th standardized moments, skewness and kurtosis.  It is worth
 looking at B<man stats> to see where this came from.
@@ -197,7 +197,7 @@ indicates sharper.
 
 =item new stats
 
-Construct a new B<stats32> object.  (Note, the class is still called
+Construct a new B<stats34> object.  (Note, the class is still called
 B<stats> to retain compatibility with the perl B<stats> library.)  It
 contains all the information necessary to compute statistics on one
 set of data.  If you want to analyze multiple sets of data, create

@@ -63,7 +63,7 @@ normaldist - perl library to generate a set of normally distributed values
  use normaldist;
 
  $n = new normal;
- my $randval = $n-E<gt>nrand ($mean, $stdev);
+ my $randval = $n->nrand ($mean, $stdev);
 
 =head1 DESCRIPTION
 
