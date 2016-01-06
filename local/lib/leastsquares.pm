@@ -113,6 +113,60 @@ sub b ($)
 	   ($self->{SX}*$self->{SX}  - $self->{N}*$self->{SXX});
 }
 
+# From Wikipedia and facts-about-sums...
+# \sum 1 = N
+# \sum (mean x) = N mean x = \sum x
+# \sum (x mean x) = mean x \sum x = (\sum x)^2 / N
+# \sum ((mean x)^2) = N (mean x)^2 = (\sum x)^2 / N
+#
+# R^2: from 0 (not fitting) to 1 (perfect fit)
+#
+# R^2 = 1 - SSres / SStot
+#
+# SStot = sum(y_i-mean y)^2
+# SSres = sum(y_i-f)^2
+# SSreg = sum(f-mean y)^2
+#
+# SSres + SSreg = SStot ... but we don't use this
+#
+# SStot = \sum(y^2 - 2y mean y + (mean y)^2)
+#       = \sum(y^2) - 2\sum(y)\sum(y)/\sum(1) + sum(y)^2/\sum(1)
+#       = \sum(y^2) - sum(y)^2/\sum(1)
+#
+# ### some symbols in unicode... ŷƒ nothing with x though
+# ƒ = mx+b  (don't confuse ƒ with f)
+# ƒ^2 = m^2x^2+2mbx+b^2
+# yƒ = ymx+yb
+#
+# SSres = \sum(y^2 - 2yƒ + ƒ^2)
+#       = \sum(y^2) - 2\sum(yƒ) + \sum(ƒ^2)
+#       = \sum(y^2) - 2\sum(ymx+yb) + \sum((mx+b)^2)
+#  = \sum(y^2) - 2m\sum(xy)- 2b\sum(y) + m^2\sum(x^2) + 2mb\sum(x) + b^2\sum(1)
+#
+#	let c=Sum(x_i^2), d=Sum(x_i y_i), e=Sum(x_i)
+#	let n=Sum(1), f=Sum(y_i), g=Sum(y_i^2)
+#	m = (-dn+ef)/(e^2-nc)
+#	b = (de-cf)/(e^2-nc)
+#
+# SStot = g - f^2/n (verified)
+# SSres = g - 2md - 2bf + cm^2 + 2mbe + nb^2 (verified)
+
+sub r_squared ($)
+{
+    my $self = shift;
+    return 0 unless $self->{N};
+    my $b = $self->b;
+    my $m = $self->m;
+    my $ss_tot = $self->{SYY} - $self->{SY}*$self->{SY}/$self->{N};
+    my $ss_res = $self->{SYY}
+	- 2*$m*$self->{SXY}
+	- 2*$b*$self->{SY}
+	+ $self->{SXX}*$m*$m
+	+ 2*$m*$b*$self->{SX}
+	+ $self->{N}*$b*$b;
+    return 1-($ss_res/$ss_tot);
+}
+
 1;
 __END__
 
