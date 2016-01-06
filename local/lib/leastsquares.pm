@@ -217,6 +217,13 @@ Return the slope of the fit line: y=mx+b
 
 Return the y-intercept of the fit line: y=mx+b
 
+=item r_squared
+
+Return r_squared, the
+L<Coefficient_of_determination|https://en.wikipedia.org/wiki/Coefficient_of_determination>,
+a much reviled measure of the quality of the fit, from 0 (bad) to 1
+(good).
+
 =back
 
 =head1 SEE ALSO

@@ -133,7 +133,7 @@
 .\" ========================================================================
 .\"
 .IX Title "leastsquares 3"
-.TH leastsquares 3 "2016-01-01" "perl v5.22.1" "User Contributed Perl Documentation"
+.TH leastsquares 3 "2016-01-05" "perl v5.22.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -176,6 +176,12 @@ Return the slope of the fit line: y=mx+b
 .IP "b" 4
 .IX Item "b"
 Return the y\-intercept of the fit line: y=mx+b
+.IP "r_squared" 4
+.IX Item "r_squared"
+Return r_squared, the
+Coefficient_of_determination <https://en.wikipedia.org/wiki/Coefficient_of_determination>,
+a much reviled measure of the quality of the fit, from 0 (bad) to 1
+(good).
 .SH "SEE ALSO"
 .IX Header "SEE ALSO"
 \&\fIstats\fR\|(3), \fIstats34\fR\|(3), \fIhisto\fR\|(3), \fIperm\fR\|(3), \fIsets\fR\|(3), \fInormaldist\fR\|(3), \fIStats\fR\|(3), \fIHisto\fR\|(3)
