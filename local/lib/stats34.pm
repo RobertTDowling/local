@@ -32,7 +32,7 @@ package stats;
 
 require Exporter;
 our @ISA = qw(Exporter); 
-our @EXPORT = qw(new add mean stdev sum N min max);
+# our @EXPORT = qw(new add mean stdev sum N min max);
 
 sub new
 {
@@ -195,7 +195,7 @@ indicates sharper.
 
 =over
 
-=item new stats
+=item $s = new stats34
 
 Construct a new B<stats34> object.  (Note, the class is still called
 B<stats> to retain compatibility with the perl B<stats> library.)  It
@@ -203,39 +203,39 @@ contains all the information necessary to compute statistics on one
 set of data.  If you want to analyze multiple sets of data, create
 multiple objects.
 
-=item add (x)
+=item $s->add (x)
 
 Add value B<x> to the set.  This will increase B<N> by 1
 
-=item N
+=item $s->N
 
 Return the number of items in the set.  When constructed, the set
 contains no values.
 
-=item sum
+=item $s->sum
 
 Return the sum of all the numbers in the set.
 
-=item mean
+=item $s->mean
 
 Return the mean value of the set, or "?" if the set is empty
 
-=item stdev
+=item $s->stdev
 
 Return the sample standard deviation of the set, or "?" if the set
 does not have 2 or more items.
 
-=item skew
+=item $s->skew
 
 Return the skewness of the set, or "?" if the set is empty
 
-=item kurt
+=item $s->kurt
 
 Return the excess kurtosis of the set, or "?" if the set is empty
 
-=item min
+=item $s->min
 
-=item max
+=item $s->max
 
 Return the extreme values of the set, or "?" if the set is empty
 

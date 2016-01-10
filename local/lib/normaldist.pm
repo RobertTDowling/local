@@ -27,7 +27,7 @@ package normaldist;
 
 require Exporter;
 our @ISA = qw(Exporter); 
-our @EXPORT = qw(new);
+# our @EXPORT = qw(new);
 
 sub new
 {

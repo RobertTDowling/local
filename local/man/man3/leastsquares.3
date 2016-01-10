@@ -133,7 +133,7 @@
 .\" ========================================================================
 .\"
 .IX Title "leastsquares 3"
-.TH leastsquares 3 "2016-01-05" "perl v5.22.1" "User Contributed Perl Documentation"
+.TH leastsquares 3 "2016-01-10" "perl v5.22.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -158,26 +158,32 @@ leastsquares \- perl library for simple least squares
 .IX Header "DESCRIPTION"
 The \fBleastsquares\fR library calculates a simple linear curve fit for a
 set of x,y data.  All input and return values are floating point.
-.IP "new stats" 4
-.IX Item "new stats"
+.ie n .IP "$l = new stats" 4
+.el .IP "\f(CW$l\fR = new stats" 4
+.IX Item "$l = new stats"
 Construct a new \fBleastsquares\fR object.  It contains all the information
 necessary to compute statistics on one set of data.  If you want to
 analyze multiple sets of data, create multiple objects.
-.IP "add (x,y)" 4
-.IX Item "add (x,y)"
+.ie n .IP "$l\->add (x,y)" 4
+.el .IP "\f(CW$l\fR\->add (x,y)" 4
+.IX Item "$l->add (x,y)"
 Add value \fBx,y\fR to the set.  This will increase \fBN\fR by 1
-.IP "N" 4
-.IX Item "N"
+.ie n .IP "$l\->N" 4
+.el .IP "\f(CW$l\fR\->N" 4
+.IX Item "$l->N"
 Return the number of items in the set.  When constructed, the set
 contains no values.
-.IP "m" 4
-.IX Item "m"
+.ie n .IP "$l\->m" 4
+.el .IP "\f(CW$l\fR\->m" 4
+.IX Item "$l->m"
 Return the slope of the fit line: y=mx+b
-.IP "b" 4
-.IX Item "b"
+.ie n .IP "$l\->b" 4
+.el .IP "\f(CW$l\fR\->b" 4
+.IX Item "$l->b"
 Return the y\-intercept of the fit line: y=mx+b
-.IP "r_squared" 4
-.IX Item "r_squared"
+.ie n .IP "$l\->r_squared" 4
+.el .IP "\f(CW$l\fR\->r_squared" 4
+.IX Item "$l->r_squared"
 Return r_squared, the
 Coefficient_of_determination <https://en.wikipedia.org/wiki/Coefficient_of_determination>,
 a much reviled measure of the quality of the fit, from 0 (bad) to 1

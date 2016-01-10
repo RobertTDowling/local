@@ -34,7 +34,8 @@ package perm;
 
 require Exporter;
 our @ISA = qw(Exporter);
-our @EXPORT = qw(new init state next fact);
+our @EXPORT = qw(fact);
+# our @EXPORT = qw(new init state next fact);
 
 # Create a new permutation object for N elements
 sub new ()
@@ -122,20 +123,20 @@ require nested loops.
 
 =over
 
-=item new perm
+=item $p = new perm
 
 Construct a new B<perm> object.  It contains the state of the
 permutation list.  If you want to have multiple lists in different
 states, create multiple objects.
 
-=item init (n)
+=item $p->init (n)
 
 Initialize the B<perm> object to have B<n> items in the initial state,
 0..B<n>-1.
 
 Returns the list in the initial state
 
-=item next
+=item $p->next
 
 Advance to the next permutation.
 

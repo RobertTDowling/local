@@ -31,7 +31,7 @@ package leastsquares;
 
 require Exporter;
 our @ISA = qw(Exporter); 
-our @EXPORT = qw(new add N m b);
+# our @EXPORT = qw(new add N m b);
 
 # y = mx+b
 # Minimize Err(m,b) = Sum(mx_i + b -y_i)^2
@@ -194,30 +194,30 @@ set of x,y data.  All input and return values are floating point.
 
 =over
 
-=item new stats
+=item $l = new stats
 
 Construct a new B<leastsquares> object.  It contains all the information
 necessary to compute statistics on one set of data.  If you want to
 analyze multiple sets of data, create multiple objects.
 
-=item add (x,y)
+=item $l->add (x,y)
 
 Add value B<x,y> to the set.  This will increase B<N> by 1
 
-=item N
+=item $l->N
 
 Return the number of items in the set.  When constructed, the set
 contains no values.
 
-=item m
+=item $l->m
 
 Return the slope of the fit line: y=mx+b
 
-=item b
+=item $l->b
 
 Return the y-intercept of the fit line: y=mx+b
 
-=item r_squared
+=item $l->r_squared
 
 Return r_squared, the
 L<Coefficient_of_determination|https://en.wikipedia.org/wiki/Coefficient_of_determination>,

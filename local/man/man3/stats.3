@@ -133,7 +133,7 @@
 .\" ========================================================================
 .\"
 .IX Title "stats 3"
-.TH stats 3 "2016-01-01" "perl v5.22.1" "User Contributed Perl Documentation"
+.TH stats 3 "2016-01-10" "perl v5.22.1" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -159,33 +159,40 @@ stats \- perl library for simple statistics
 .IX Header "DESCRIPTION"
 The \fBstats\fR library calculates simple statistics in the fashion of a
 handheld calculator.  All input and return values are floating point.
-.IP "new stats" 4
-.IX Item "new stats"
+.ie n .IP "$s = new stats" 4
+.el .IP "\f(CW$s\fR = new stats" 4
+.IX Item "$s = new stats"
 Construct a new \fBstats\fR object.  It contains all the information
 necessary to compute statistics on one set of data.  If you want to
 analyze multiple sets of data, create multiple objects.
-.IP "add (x)" 4
-.IX Item "add (x)"
+.ie n .IP "$s\->add (x)" 4
+.el .IP "\f(CW$s\fR\->add (x)" 4
+.IX Item "$s->add (x)"
 Add value \fBx\fR to the set.  This will increase \fBN\fR by 1
 .IP "N" 4
 .IX Item "N"
 Return the number of items in the set.  When constructed, the set
 contains no values.
-.IP "sum" 4
-.IX Item "sum"
+.ie n .IP "$s\->sum" 4
+.el .IP "\f(CW$s\fR\->sum" 4
+.IX Item "$s->sum"
 Return the sum of all the numbers in the set.
-.IP "mean" 4
-.IX Item "mean"
+.ie n .IP "$s\->mean" 4
+.el .IP "\f(CW$s\fR\->mean" 4
+.IX Item "$s->mean"
 Return the mean value of the set, or \*(L"?\*(R" if the set is empty
-.IP "stdev" 4
-.IX Item "stdev"
+.ie n .IP "$s\->stdev" 4
+.el .IP "\f(CW$s\fR\->stdev" 4
+.IX Item "$s->stdev"
 Return the sample standard deviation of the set, or \*(L"?\*(R" if the set
 does not have 2 or more items.
-.IP "min" 4
-.IX Item "min"
+.ie n .IP "$s\->min" 4
+.el .IP "\f(CW$s\fR\->min" 4
+.IX Item "$s->min"
 .PD 0
-.IP "max" 4
-.IX Item "max"
+.ie n .IP "$s\->max" 4
+.el .IP "\f(CW$s\fR\->max" 4
+.IX Item "$s->max"
 .PD
 Return the extreme values of the set, or \*(L"?\*(R" if the set is empty
 .SH "SEE ALSO"
