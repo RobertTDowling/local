@@ -1113,33 +1113,42 @@ sub sort_by_name ($$)
 {
     my ($f, $i) = @_;
     # For sort-by-ext
-    my $ix = $H{$f}{name} . pack ('xN', $i);
-    $ix = lc $ix if !$CASE;
+    my $n = $CASE ? $H{$f}{name} : lc $H{$f}{name};
+    my $ix = $n . pack ('xN', $i);
     $ix;
 }
 
+# Want joe.tar.gz to be joe.tar|gz and
+# want fred to be fred|<null>
 sub sort_by_ext ($$)
 {
     my ($f, $i) = @_;
-    my ($name, $ext) = split /\./, $H{$f}{name}, 2;
-    my $ix = pack ('A*xA*xN', $ext, $name, $i);
-    $ix = lc $ix if !$CASE;
+    # my ($name, $ext) = split /\./, $H{$f}{name}, 2;
+    my (@n) = split /\./, $H{$f}{name};
+    my $ext = pop @n;
+    my $name = join ('.', @n);
+    $name = $ext, undef $ext unless @n;
+    my $n = $CASE ? $name : lc $name;
+    my $e = $CASE ? $ext : lc $ext;
+    my $ix = pack ('A*xA*xN', $e, $n, $i);
     $ix;
 }
 
 sub sort_by_date ($$)
 {
     my ($f, $i) = @_;
-    my $ix = pack ("NxA*xN", $H{$_}{stat}[9], $H{$f}{name}, $i);
-    $ix = lc $ix if !$CASE;
+    my $n = $CASE ? $H{$f}{name} : lc $H{$f}{name};
+    my $ix = pack ("NxA*xN", $H{$_}{stat}[9], $n, $i);
     $ix;
 }
 
 sub sort_by_size ($$)
 {
     my ($f, $i) = @_;
-    my $ix = pack ("NxA*xN", $H{$_}{size}, $H{$f}{name}, $i);
-    $ix = lc $ix if !$CASE;
+    my $n = $CASE ? $H{$f}{name} : lc $H{$f}{name};
+    my $h = $H{$_}{size} >> 32;
+    my $l = $H{$_}{size} & 0xffffffff;
+    my $ix = pack ("NNxA*xN", $h, $l, $n, $i);
     $ix;
 }
 
@@ -5457,7 +5466,7 @@ resortkeyD:
 # Run Time
 
 $VERSION_NUM = "1.34";
-$VERSION = "XYZ ${VERSION_NUM}j";
+$VERSION = "XYZ ${VERSION_NUM}k";
 $FOR_DOC = 0;
 
 $REMINDER_BORDER = "\r".('-'x26)."\n";
