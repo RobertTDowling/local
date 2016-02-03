@@ -172,7 +172,9 @@ take longer to converge and will effectively filter more.  In terms of classic
 \&\s-1RC\s0 filters, the time constant, T = 1/\fBalpha\fR.  After 1/\fBalpha\fR samples, the
 filter will have converged 1\-exp(\-1)=63.2% of the way to the new input value.
 .Sp
-Can I say something about the frequency it will pass?
+The cutoff frequency of the filter is 1/T radians/second.  As a
+period, this will be 2Pi*T samples.  At this frequency, the filter
+passes half the power, or 1/\fIsqrt\fR\|(2) = 0.707 of the amplitude.
 .ie n .IP "$y = $e\->value ($x)" 4
 .el .IP "\f(CW$y\fR = \f(CW$e\fR\->value ($x)" 4
 .IX Item "$y = $e->value ($x)"

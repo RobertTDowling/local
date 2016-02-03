@@ -93,6 +93,12 @@ sub max ()
     $self->{N} ? $self->{MAX} : "?";
 }
 
+sub range ()
+{
+    my $self = shift;
+    return $self->max - $self->min;
+}
+
 1;
 __END__
 
@@ -153,7 +159,10 @@ does not have 2 or more items.
 
 =item $s->max
 
-Return the extreme values of the set, or "?" if the set is empty
+=item $s->range
+
+Return the extreme values of the set, or "?" if the set is empty.
+Range is defined as B<max>-B<min>
 
 =back
 

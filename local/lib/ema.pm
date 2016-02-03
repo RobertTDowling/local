@@ -91,7 +91,9 @@ take longer to converge and will effectively filter more.  In terms of classic
 RC filters, the time constant, T = 1/B<alpha>.  After 1/B<alpha> samples, the
 filter will have converged 1-exp(-1)=63.2% of the way to the new input value.
 
-Can I say something about the frequency it will pass?
+The cutoff frequency of the filter is 1/T radians/second.  As a
+period, this will be 2Pi*T samples.  At this frequency, the filter
+passes half the power, or 1/sqrt(2) = 0.707 of the amplitude.
 
 =item $y = $e->value ($x)
 
@@ -113,3 +115,4 @@ stats(3), leastsquares(3)
 Robert Dowling <F<RPNCalcN@gmail.com>>.
 
 =cut
+a
