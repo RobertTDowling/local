@@ -39,16 +39,48 @@ sub new
     $self;
 }
 
+# Accept a new value and return a new filtered value
 sub filter ($)
 {
     my ($self, $x) = @_;
     $self->{y} += ($x - $self->{y}) * $self->{alpha};
 }
 
+# Return the last filtered value
 sub y ()
 {
     my $self = shift;
     $self->{y};
+}
+
+use constant PI => 3.1415926535;
+
+# Return the cutoff frequency of this filter as a period
+sub cutoff_period ()
+{
+    my $self = shift;
+    2 * PI / $self->{alpha};
+}
+
+# Return the frequency of this filter relative to the sample rate
+sub cutoff_frequency ($)
+{
+    my ($self, $T) = @_;
+    $T / $self->cutoff_period;
+}
+
+# Return the phase delay in radians at the given frequency and sample rate
+sub phase_delay ($$)
+{
+    my ($self, $f, $T) = @_;
+    atan2($f,$self->cutoff_frequency($T));
+}
+
+# Return the phase delay in samples of the given frequency and sample rate
+sub phase_delay_samples ($$)
+{
+    my ($self, $f, $T) = @_;
+    $T/$f*$self->phase_delay($f,$T)/(2*PI);
 }
 
 1;
@@ -95,6 +127,8 @@ The cutoff frequency of the filter is 1/T radians/second.  As a
 period, this will be 2Pi*T samples.  At this frequency, the filter
 passes half the power, or 1/sqrt(2) = 0.707 of the amplitude.
 
+The phase delay going through the filter is -atan(omega/omega_0)
+
 =item $y = $e->value ($x)
 
 Advance the moving average by including a new input value B<$x> and return the
@@ -103,6 +137,20 @@ next filtered value.
 =item $e->y
 
 Return the current value of the filter without advancing it.
+
+=item $samples = $e->cutoff_period;
+
+=item $frequency = $e->cutoff_frequency($sample_rate);
+
+Return the filter cutoff in B<$samples> or as the B<$frequency> for a
+given B<$sample_rate>.
+
+=item $radians = $e->phase_delay ($freq, $sample_rate);
+
+=item $samples = $e->phase_delay_samples ($freq, $sample_rate);
+
+Return the phase delay in B<radians> or in B<$samples> for the given
+B<$frequency> and B<$sample_rate>.
 
 =back
 
